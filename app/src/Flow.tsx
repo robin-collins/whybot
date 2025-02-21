@@ -8,7 +8,6 @@ import ReactFlow, {
   useEdgesState,
   useNodesState,
   NodeProps,
-  EdgeProps,
 } from 'reactflow';
 import dagre from 'dagre';
 
@@ -74,20 +73,6 @@ export interface FlowProviderProps {
   deleteBranch: (id: string) => void;
   nodeTypes?: Record<string, React.ComponentType<NodeProps>>;
 }
-
-interface DeletableEdgeProps extends EdgeProps {
-  data: {
-    deleteBranch: (id: string) => void;
-  };
-}
-
-export const DeletableEdge: React.FC<DeletableEdgeProps> = (
-  {
-    // ... existing props
-  }
-) => {
-  // ... existing implementation
-};
 
 export const openai_browser = async (
   prompt: string,
@@ -264,7 +249,7 @@ export const Flow: React.FC<FlowProviderProps> = props => {
         // fitView
         panOnScroll
         minZoom={0.1}
-        nodeTypes={props.nodeTypes}
+        nodeTypes={props.nodeTypes ?? nodeTypes}
         edgeTypes={edgeTypes}
         nodes={laid.nodes}
         edges={laid.edges}

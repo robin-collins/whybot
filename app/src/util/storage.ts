@@ -38,10 +38,10 @@ export const autoSaveMindMap = (
   model: string,
   seedQuery: string
 ) => {
-  const id = `auto_${Date.now()}`;
+  const id = `mindmap_${seedQuery.toLowerCase().replace(/[^a-z0-9]/g, '_')}`;
   saveMindMap({
     id,
-    name: `Auto-saved: ${seedQuery}`,
+    name: seedQuery,
     date: new Date().toISOString(),
     tree,
     persona,

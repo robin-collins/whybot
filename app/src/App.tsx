@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import './index.css';
 import GraphPage from './GraphPage';
 import { PERSONAS } from './personas';
@@ -11,103 +11,21 @@ import { RouterProvider, createBrowserRouter, useNavigate, BrowserRouter } from 
 import AboutPage from './AboutPage';
 import { StoredMindMap } from './util/storage';
 
-function CoreStuff() {
-  const [seedQuery, setSeedQuery] = useState<string>();
-  const [model, setModel] = useState(Object.keys(MODELS)[0]);
-  const [persona, setPersona] = useState(Object.keys(PERSONAS)[0]);
-  const [apiKey, setApiKey] = useState<ApiKey>(getApiKeyFromLocalStorage());
-  const [example, setExample] = useState<Example>();
-  const handleLoadMindMap = useCallback((map: StoredMindMap) => {
-    setSeedQuery(map.seedQuery);
-    setModel(map.model);
-    setPersona(map.persona);
-  }, []);
-
-  return example ? (
-    <div className="text-white bg-zinc-700 h-screen w-screen fixed left-0 top-0">
-      <GraphPageExample
-        example={example}
-        onExit={() => {
-          setSeedQuery('');
-          setExample(undefined);
-        }}
-      />
-    </div>
-  ) : seedQuery ? (
-    <div className="text-white bg-zinc-700 h-screen w-screen fixed left-0 top-0">
-      <GraphPage
-        apiKey={apiKey}
-        onExit={() => setSeedQuery('')}
-        seedQuery={seedQuery}
-        persona={persona}
-        model={model}
-      />
-    </div>
-  ) : (
-    <div className="text-white bg-zinc-700 min-h-screen flex flex-col">
-      <StartPage
-        apiKey={apiKey}
-        setApiKey={setApiKey}
-        model={model}
-        persona={persona}
-        onSetModel={setModel}
-        onSetPersona={setPersona}
-        onSetExample={setExample}
-        onSubmitPrompt={query => {
-          setSeedQuery(query);
-          setModel(model);
-          setPersona(persona);
-        }}
-        onLoadMindMap={handleLoadMindMap}
-      />
-    </div>
-  );
-}
-
 function App() {
-  return (
-    <BrowserRouter>
-      <AppContent />
-    </BrowserRouter>
-  );
-}
-
-function AppContent() {
-  const [apiKey, setApiKey] = useState<ApiKey>(getApiKeyFromLocalStorage());
-  const [model, setModel] = useState('openai/gpt-4o-mini');
-  const [persona, setPersona] = useState('researcher');
-  const navigate = useNavigate();
-
-  const handleLoadMindMap = useCallback((map: StoredMindMap) => {
-    setModel(map.model);
-    setPersona(map.persona);
-    navigate(`/graph?q=${encodeURIComponent(map.seedQuery)}`);
-  }, []);
-
   return (
     <RouterProvider
       router={createBrowserRouter([
         {
           path: '/',
-          element: (
-            <StartPage
-              model={model}
-              persona={persona}
-              apiKey={apiKey}
-              onSubmitPrompt={query => {
-                navigate(`/graph?q=${encodeURIComponent(query)}`);
-              }}
-              onSetModel={setModel}
-              onSetPersona={setPersona}
-              onSetExample={example => {
-                setModel(example.model);
-                setPersona(example.persona);
-                navigate(`/graph?q=${encodeURIComponent(example.tree['0'].question)}`);
-              }}
-              setApiKey={setApiKey}
-              onLoadMindMap={handleLoadMindMap}
-            />
-          ),
+          element: <AppContent />,
+        },
+        {
+          path: '/graph',
+          element: <AppContent />,
+        },
+        {
+          path: '/example',
+          element: <AppContent />,
         },
         {
           path: '/about',
@@ -115,6 +33,112 @@ function AppContent() {
         },
       ])}
     />
+  );
+}
+
+function AppContent() {
+  const [apiKey, setApiKey] = useState<ApiKey>(getApiKeyFromLocalStorage());
+  const [model, setModel] = useState(Object.keys(MODELS)[0]);
+  const [persona, setPersona] = useState(Object.keys(PERSONAS)[0]);
+  const navigate = useNavigate();
+  const [seedQuery, setSeedQuery] = useState<string>();
+  const [example, setExample] = useState<Example | undefined>();
+
+  const handleLoadMindMap = useCallback(
+    (map: StoredMindMap) => {
+      // Moved from CoreStuff and modified
+      setModel(map.model);
+      setPersona(map.persona);
+      setSeedQuery(map.seedQuery); // Set seedQuery when loading mindmap
+      navigate(`/graph?q=${encodeURIComponent(map.seedQuery)}`); // Navigate to graph route
+    },
+    [navigate]
+  );
+
+  const handleSetExample = useCallback(
+    (ex: Example) => {
+      // New handler for setting example
+      setExample(ex);
+      setSeedQuery(undefined); // Clear seedQuery when example is set
+      setModel(ex.model);
+      setPersona(ex.persona);
+      navigate(`/example?ex=${encodeURIComponent(ex.tree['0'].question)}`); // Navigate to example route
+    },
+    [navigate]
+  );
+
+  const handleSubmitPrompt = useCallback(
+    (query: string) => {
+      // New handler for submitting prompt
+      setSeedQuery(query);
+      setExample(undefined); // Clear example when new query is submitted
+      setModel(model);
+      setPersona(persona);
+      navigate(`/graph?q=${encodeURIComponent(query)}`); // Navigate to graph route
+    },
+    [navigate, model, persona]
+  );
+
+  const handleGraphExit = useCallback(() => {
+    // New handler for exiting GraphPage
+    setSeedQuery(undefined);
+    navigate('/'); // Navigate back to start page
+  }, [navigate]);
+
+  const handleExampleExit = useCallback(() => {
+    // New handler for exiting GraphPageExample
+    setExample(undefined);
+    navigate('/'); // Navigate back to start page
+  }, [navigate]);
+
+  // Get the current location's search params
+  const location = window.location.pathname;
+  const searchParams = new URLSearchParams(window.location.search);
+
+  // Initialize state based on URL if needed
+  useEffect(() => {
+    if (location === '/graph') {
+      const q = searchParams.get('q');
+      if (q) setSeedQuery(decodeURIComponent(q));
+    } else if (location === '/example') {
+      const ex = searchParams.get('ex');
+      if (ex && examples?.length) {
+        const matchingExample = examples.find(e => e.tree['0'].question === decodeURIComponent(ex));
+        if (matchingExample) setExample(matchingExample);
+      }
+    }
+  }, [location]);
+
+  return (
+    <div className="text-white bg-zinc-700 min-h-screen flex flex-col">
+      {seedQuery ? (
+        <div className="text-white bg-zinc-700 h-screen w-screen fixed left-0 top-0">
+          <GraphPage
+            apiKey={apiKey}
+            onExit={handleGraphExit}
+            seedQuery={seedQuery}
+            persona={persona}
+            model={model}
+          />
+        </div>
+      ) : example ? (
+        <div className="text-white bg-zinc-700 h-screen w-screen fixed left-0 top-0">
+          <GraphPageExample example={example} onExit={handleExampleExit} />
+        </div>
+      ) : (
+        <StartPage
+          model={model}
+          persona={persona}
+          apiKey={apiKey}
+          onSubmitPrompt={handleSubmitPrompt}
+          onSetModel={setModel}
+          onSetPersona={setPersona}
+          onSetExample={handleSetExample}
+          setApiKey={setApiKey}
+          onLoadMindMap={handleLoadMindMap}
+        />
+      )}
+    </div>
   );
 }
 

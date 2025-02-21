@@ -1,21 +1,18 @@
-import React, { useEffect, useState } from "react";
-import useMeasure from "react-use-measure";
-import { Handle, Position } from "reactflow";
-import "./fadeout-text.css";
-import classNames from "classnames";
-import { NodeDims } from "./GraphPage";
-import { useFocused } from "./FocusedContext";
-import TextareaAutosize from "react-textarea-autosize";
+import React, { useEffect, useState } from 'react';
+import useMeasure from 'react-use-measure';
+import { Handle, Position } from 'reactflow';
+import './fadeout-text.css';
+import classNames from 'classnames';
+import { NodeDims } from './GraphPage';
+import { useFocused } from './FocusedContext';
+import TextareaAutosize from 'react-textarea-autosize';
+import { NodeProps } from 'reactflow';
 
 const getScaleFactor = (): number => {
-  const viewportElement = document.querySelector(
-    ".react-flow__viewport"
-  ) as HTMLElement;
+  const viewportElement = document.querySelector('.react-flow__viewport') as HTMLElement;
 
   if (!viewportElement) {
-    console.error(
-      'Element with the classname "react-flow__viewport" not found'
-    );
+    console.error('Element with the classname "react-flow__viewport" not found');
     return 1; // default scale factor
   }
 
@@ -27,16 +24,14 @@ const getScaleFactor = (): number => {
   const match = /matrix\((.+),/.exec(transformValue);
 
   if (!match) {
-    console.warn(
-      "Unable to find scale factor from the element's transform property"
-    );
+    console.warn("Unable to find scale factor from the element's transform property");
     return 1; // default scale factor
   }
 
   return parseFloat(match[1]);
 };
 
-type FadeoutTextNodeProps = {
+export type FadeoutTextNodeProps = {
   data: {
     text: string;
     nodeID: string;
@@ -46,12 +41,13 @@ type FadeoutTextNodeProps = {
     onAnswer: (nodeID: string) => void;
     onAddUserQuestion: (nodeID: string) => void;
   };
-};
-export const FadeoutTextNode: React.FC<FadeoutTextNodeProps> = (props) => {
+} & NodeProps;
+
+export const FadeoutTextNode: React.FC<FadeoutTextNodeProps> = props => {
   const [ref, bounds] = useMeasure();
   const [expanded, setExpanded] = useState(
     // Auto-expand the first question and answer nodes
-    props.data.nodeID === "a-0" || props.data.nodeID === "q-0" ? true : false
+    props.data.nodeID === 'a-0' || props.data.nodeID === 'q-0' ? true : false
   );
   const [actualHeight, setActualHeight] = useState(bounds.height);
   useEffect(() => {
@@ -67,42 +63,37 @@ export const FadeoutTextNode: React.FC<FadeoutTextNodeProps> = (props) => {
         }
         setExpanded(true);
         // Now I have to call setNodeDims with the nodeID and set the width and height
-        props.data.setNodeDims((prevState) => ({
+        props.data.setNodeDims(prevState => ({
           ...prevState,
           [props.data.nodeID]: { width: 250, height: actualHeight + 36 },
         }));
       }}
-      onMouseDown={(e) => {
+      onMouseDown={e => {
         e.stopPropagation();
       }}
-      className={classNames("fadeout-text border relative", {
-        "cursor-pointer": !expanded,
-        "cursor-default": expanded,
-        "border-sky-400": props.data.question,
-        "border-white/50": !props.data.question,
-        "opacity-40":
-          focusedId != null && !isInFocusedBranch(props.data.nodeID.slice(2)),
-        "border-yellow-100":
-          props.data.question && focusedId === props.data.nodeID.slice(2),
+      className={classNames('fadeout-text border relative', {
+        'cursor-pointer': !expanded,
+        'cursor-default': expanded,
+        'border-sky-400': props.data.question,
+        'border-white/50': !props.data.question,
+        'opacity-40': focusedId != null && !isInFocusedBranch(props.data.nodeID.slice(2)),
+        'border-yellow-100': props.data.question && focusedId === props.data.nodeID.slice(2),
       })}
       style={{
-        position: "relative",
+        position: 'relative',
         borderRadius: 4,
-        padding: "8px 12px",
+        padding: '8px 12px',
         maxWidth: 250,
-        overflow: "hidden",
-        height: expanded
-          ? actualHeight + 16 + 2
-          : Math.min(140 + 16 + 2, actualHeight + 16 + 2),
-        transition:
-          "transform 0.5s, height 0.5s, width 0.5s, opacity 0.15s, border 0.15s",
+        overflow: 'hidden',
+        height: expanded ? actualHeight + 16 + 2 : Math.min(140 + 16 + 2, actualHeight + 16 + 2),
+        transition: 'transform 0.5s, height 0.5s, width 0.5s, opacity 0.15s, border 0.15s',
       }}
     >
-      <Handle type={"target"} position={Position.Left} />
-      <Handle type={"source"} position={Position.Right} />
+      <Handle type={'target'} position={Position.Left} />
+      <Handle type={'source'} position={Position.Right} />
       <div
         className="fadeout-text-inner h-[140px]"
-        style={expanded ? { WebkitMaskImage: "none" } : {}}
+        style={expanded ? { WebkitMaskImage: 'none' } : {}}
       >
         <div ref={ref}>{props.data.text}</div>
       </div>
@@ -111,7 +102,7 @@ export const FadeoutTextNode: React.FC<FadeoutTextNodeProps> = (props) => {
       {props.data.question && !props.data.hasAnswer && (
         <button
           className="absolute bottom-2 right-2 px-3 py-1 bg-blue-600 rounded text-sm hover:bg-blue-500"
-          onClick={(e) => {
+          onClick={e => {
             e.stopPropagation();
             props.data.onAnswer(props.data.nodeID);
           }}
@@ -124,7 +115,7 @@ export const FadeoutTextNode: React.FC<FadeoutTextNodeProps> = (props) => {
       {!props.data.question && (
         <button
           className="absolute bottom-2 right-2 px-3 py-1 bg-zinc-700 rounded text-sm hover:bg-zinc-600"
-          onClick={(e) => {
+          onClick={e => {
             e.stopPropagation();
             props.data.onAddUserQuestion(props.data.nodeID);
           }}
@@ -138,10 +129,10 @@ export const FadeoutTextNode: React.FC<FadeoutTextNodeProps> = (props) => {
 
 // Add new type for user input nodes
 export const UserInputNode = ({ data }: { data: any }) => {
-  const [question, setQuestion] = useState(data.initialQuestion || "");
-  
+  const [question, setQuestion] = useState(data.initialQuestion || '');
+
   useEffect(() => {
-    setQuestion(data.initialQuestion || "");
+    setQuestion(data.initialQuestion || '');
   }, [data.initialQuestion]);
 
   return (
@@ -150,16 +141,16 @@ export const UserInputNode = ({ data }: { data: any }) => {
         className="w-full bg-transparent text-white outline-none resize-none"
         placeholder="Type your question..."
         value={question}
-        onChange={(e) => setQuestion(e.target.value)}
+        onChange={e => setQuestion(e.target.value)}
       />
       <div className="flex gap-2 mt-2">
-        <button 
+        <button
           className="px-3 py-1 bg-zinc-700 rounded hover:bg-zinc-600 text-sm"
           onClick={() => data.onSave(question)}
         >
           Save
         </button>
-        <button 
+        <button
           className="px-3 py-1 bg-blue-600 rounded hover:bg-blue-500 text-sm"
           onClick={() => data.onAsk(question)}
         >

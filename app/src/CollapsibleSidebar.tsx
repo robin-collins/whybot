@@ -51,15 +51,7 @@ export const Sidebar = (props: SidebarProps) => {
 
   const filteredMaps = mindMaps.filter(map => {
     const searchLower = searchQuery.toLowerCase();
-    return (
-      map.name.toLowerCase().includes(searchLower) ||
-      map.seedQuery.toLowerCase().includes(searchLower) ||
-      Object.values(map.tree).some(
-        (node: QATreeNode) =>
-          node.question.toLowerCase().includes(searchLower) ||
-          node.answer.toLowerCase().includes(searchLower)
-      )
-    );
+    return map.seedQuery.toLowerCase().includes(searchLower);
   });
 
   return (

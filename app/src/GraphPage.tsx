@@ -13,7 +13,8 @@ import { getFingerprint } from './main';
 import { db } from './firebase';
 import { autoSaveMindMap } from './util/storage';
 import { FadeoutTextNode, UserInputNode } from './FadeoutTextNode';
-import { NodeProps } from 'reactflow';
+// import { NodeProps, ReactFlowInstance } from 'reactflow';
+import { FadeoutTextNodeProps } from './FadeoutTextNode';
 
 export interface QATreeNode {
   question: string;
@@ -42,10 +43,13 @@ export const convertTreeToFlow = (
   tree: QATree,
   setNodeDims: any,
   deleteBranch: any,
-  playing: boolean
+  playing: boolean,
+  focusedId: string | null
 ): any => {
   const nodes: TreeNode[] = [];
   Object.keys(tree).forEach(key => {
+    const isFocused = focusedId ? key === focusedId || isChild(tree, focusedId, key) : false;
+
     nodes.push({
       id: `q-${key}`,
       type: 'fadeText',
@@ -54,6 +58,8 @@ export const convertTreeToFlow = (
         nodeID: `q-${key}`,
         setNodeDims,
         question: true,
+        hasAnswer: !!tree[key].answer,
+        isFocused,
       },
       position: { x: 0, y: 0 },
       parentNodeID: tree[key].parent != null ? `a-${tree[key].parent}` : '',
@@ -234,10 +240,13 @@ class NodeGenerator {
   running: boolean = false;
   fullyPaused: boolean = false;
   onFullyPausedChange: () => void;
+  generator: AsyncIterator<void>;
 
   constructor(opts: NodeGeneratorOpts, onFullyPausedChange: () => void) {
     this.opts = opts;
     this.onFullyPausedChange = onFullyPausedChange;
+    // Create the generator instance
+    this.generator = nodeGenerator(this.opts);
   }
 
   async run() {
@@ -247,50 +256,29 @@ class NodeGenerator {
     while (this.running && this.opts.questionQueue.length > 0) {
       const questionId = this.opts.questionQueue[0];
 
-      // Only process the initial question automatically
-      if (questionId === '0') {
-        await this.processQuestion(questionId);
+      // Only process if the node hasn't started processing
+      if (!this.opts.qaTree[questionId].startedProcessing) {
+        // Use the generator to process the question
+        await this.generator.next();
+      } else {
+        this.opts.questionQueue.shift();
       }
-
-      this.opts.questionQueue.shift();
     }
 
     this.fullyPaused = true;
     this.onFullyPausedChange();
   }
 
-  async processQuestion(questionId: string) {
-    const node = this.opts.qaTree[questionId];
-    if (node == null) {
-      throw new Error(`Node ${questionId} not found`);
-    }
-    node.startedProcessing = true;
-
-    const promptForAnswer = PERSONAS[this.opts.persona].getPromptForAnswer(node, this.opts.qaTree);
-
-    await openai(promptForAnswer, {
-      apiKey: this.opts.apiKey.key,
-      temperature: 1,
-      model: MODELS[this.opts.model].key,
-      onChunk: chunk => {
-        const node = this.opts.qaTree[questionId];
-        if (node == null) {
-          throw new Error(`Node ${questionId} not found`);
-        }
-        node.answer += chunk;
-        this.opts.onChangeQATree();
-      },
-    });
-
-    this.opts.onNodeGenerated();
+  pause() {
+    this.running = false;
   }
 
   resume() {
-    this.running = true;
+    this.run();
   }
 
-  pause() {
-    this.running = false;
+  setFocusedId(id: string | null) {
+    this.opts.focusedId = id;
   }
 }
 
@@ -475,6 +463,7 @@ function GraphPage(props: {
       }
     );
     generatorRef.current.run();
+    submitPrompt();
     return () => {
       generatorRef.current?.destroy();
     };
@@ -501,8 +490,11 @@ function GraphPage(props: {
   );
 
   const { nodes: flowNodes, edges } = useMemo(() => {
-    return convertTreeToFlow(resultTree, setNodeDims, deleteBranch, playing);
-  }, [resultTree, playing]);
+    return convertTreeToFlow(resultTree, setNodeDims, deleteBranch, playing, focusedId.current);
+  }, [resultTree, nodeDims, playing, focusedId]);
+
+  // Combine main flow nodes with user input nodes
+  const allNodes = useMemo(() => [...flowNodes, ...nodes], [flowNodes, nodes]);
 
   function resume() {
     pauseAtNodeCountRef.current = nodeCountRef.current + NODE_LIMIT_PER_PLAY;
@@ -673,11 +665,14 @@ function GraphPage(props: {
   // Update node types to include our new functionality
   const nodeTypes = useMemo(
     () => ({
-      fadeText: (props: any) => (
+      fadeText: (props: FadeoutTextNodeProps) => (
         <FadeoutTextNode
           {...props}
-          onAnswer={handleAnswer}
-          onAddUserQuestion={handleAddUserQuestion}
+          data={{
+            ...props.data,
+            onAnswer: handleAnswer,
+            onAddUserQuestion: handleAddUserQuestion,
+          }}
         />
       ),
       userInput: UserInputNode,
@@ -685,25 +680,35 @@ function GraphPage(props: {
     [handleAnswer, handleAddUserQuestion]
   );
 
+  // Update flow elements when focus changes
+  useEffect(() => {
+    if (generatorRef.current) {
+      generatorRef.current.setFocusedId(focusedId.current);
+
+      // Update question queue to only include focused branch questions
+      const newQueue: string[] = [];
+      for (const [id, node] of Object.entries(resultTree)) {
+        if (
+          !node.startedProcessing &&
+          (!focusedId.current || isChild(resultTree, focusedId.current, id))
+        ) {
+          newQueue.push(id);
+        }
+      }
+      questionQueueRef.current.splice(0, questionQueueRef.current.length, ...newQueue);
+    }
+  }, [focusedId, resultTree]);
+
   return (
     <FocusedContextProvider
       qaTree={resultTree}
       onSetFocusedId={id => {
-        generatorRef.current?.setFocusedId(id);
-        const newQueue: string[] = [];
-        for (const [id, node] of Object.entries(resultTree)) {
-          if (!node.children && !node.answer && (id == null || isChild(resultTree, id, id))) {
-            newQueue.push(id);
-          }
-        }
-        console.log('setting queue', questionQueueRef.current);
-        questionQueueRef.current.splice(0, questionQueueRef.current.length, ...newQueue);
-        console.log('set queue', questionQueueRef.current);
+        focusedId.current = id;
       }}
     >
       <div className="text-sm">
         <FlowProvider
-          flowNodes={flowNodes}
+          flowNodes={allNodes}
           flowEdges={edges}
           nodeDims={nodeDims}
           deleteBranch={deleteBranch}

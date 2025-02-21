@@ -1,4 +1,4 @@
-import { getBezierPath } from 'reactflow';
+import { getBezierPath, EdgeProps, Position } from 'reactflow';
 import './DeletableEdge.css';
 
 interface DeletableEdgeProps extends EdgeProps {
@@ -10,7 +10,7 @@ interface DeletableEdgeProps extends EdgeProps {
   sourcePosition: Position;
   targetPosition: Position;
   style?: React.CSSProperties;
-  data: {
+  data?: {
     deleteBranch: (id: string) => void;
   };
 }
@@ -45,7 +45,9 @@ export const DeletableEdge: React.FC<DeletableEdgeProps> = ({
         d={edgePath}
         onClick={evt => {
           evt.stopPropagation();
-          data.deleteBranch(id.split('-')[2]);
+          if (data?.deleteBranch) {
+            data.deleteBranch(id.split('-')[2]);
+          }
         }}
       />
     </>
