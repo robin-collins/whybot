@@ -11,9 +11,12 @@ import { initializeApp } from "firebase-admin/app";
 import { getFirestore } from "firebase-admin/firestore";
 import { credential } from "firebase-admin";
 
-config();
+config({ path: path.join(__dirname, '..', '.env') });
 
-console.log(process.env.FIREBASE_PRIVATE_KEY, process.env.OPENAI_API_KEY);
+console.log("Environment variables loaded:", {
+  FIREBASE_PRIVATE_KEY: process.env.FIREBASE_PRIVATE_KEY ? 'Present' : 'Missing',
+  OPENAI_API_KEY: process.env.OPENAI_API_KEY ? 'Present' : 'Missing'
+});
 
 initializeApp({
   credential: credential.cert({
@@ -31,8 +34,8 @@ const db = getFirestore();
 const store = new MemoryStore();
 
 const PROMPT_LIMITS = {
-  "openai/gpt3.5": 5,
-  "openai/gpt4": 0,
+  "openai/gpt4o-mini": 50,
+  "openai/o3-mini": 5,
 };
 const PORT = process.env.PORT || 6823;
 
@@ -40,11 +43,15 @@ function rateLimiterKey(model: string, fingerprint: string) {
   return model + "/" + fingerprint;
 }
 
-const rateLimiters = {
+// Add environment variable check
+const ENABLE_RATE_LIMITS = process.env.ENABLE_RATE_LIMITS === 'true';
+
+// Modify the rate limiter application logic
+const rateLimiters = ENABLE_RATE_LIMITS ? {
   "openai/gpt3.5": rateLimit({
-    windowMs: 24 * 60 * 60 * 1000, // 24 hours in milliseconds
-    max: PROMPT_LIMITS["openai/gpt3.5"],
-    message: "You have exceeded the 5 requests in 24 hours limit!", // message to send when a user has exceeded the limit
+    windowMs: 24 * 60 * 60 * 1000,
+    max: PROMPT_LIMITS["openai/gpt4o-mini"],
+    message: "You have exceeded the 50 requests in 24 hours limit!",
     keyGenerator: (req) => {
       return rateLimiterKey(req.query.model as string, req.query.fp as string);
     },
@@ -53,9 +60,9 @@ const rateLimiters = {
     standardHeaders: true,
   }),
   "openai/gpt4": rateLimit({
-    windowMs: 24 * 60 * 60 * 1000, // 24 hours in milliseconds
-    max: PROMPT_LIMITS["openai/gpt4"],
-    message: "You have exceeded the 1 request per day limit!", // message to send when a user has exceeded the limit
+    windowMs: 24 * 60 * 60 * 1000,
+    max: PROMPT_LIMITS["openai/o3-mini"],
+    message: "You have exceeded the 5 requests per day limit!",
     keyGenerator: (req) => {
       return req.query.fp + "";
     },
@@ -63,7 +70,7 @@ const rateLimiters = {
     legacyHeaders: false,
     standardHeaders: true,
   }),
-};
+} : null;
 
 const configuration = new Configuration({
   apiKey: process.env.OPENAI_API_KEY,
@@ -182,6 +189,11 @@ app.get("/api/completion", (req, res) => {
 });
 
 app.get("/api/prompts-remaining", (req, res) => {
+  if (!ENABLE_RATE_LIMITS) {
+    res.json({ remaining: 999999 }); // Or any large number to indicate unlimited
+    return;
+  }
+
   const key = rateLimiterKey(req.query.model as string, req.query.fp as string);
   console.log("KEY", key);
 
@@ -191,26 +203,30 @@ app.get("/api/prompts-remaining", (req, res) => {
     0
   );
 
-  res.json({
-    remaining: remaining,
-  });
+  res.json({ remaining });
 });
 
 app.get("/api/moar-prompts", (req, res) => {
+  if (!ENABLE_RATE_LIMITS) {
+    res.json({ message: "Rate limits disabled" });
+    return;
+  }
+
   const key = rateLimiterKey(req.query.model as string, req.query.fp as string);
   store.hits[key] = (store.hits[key] ?? 0) - 3;
   console.log("Got moar prompts for", req.query.fp);
-  res.json({
-    message: "Decremented",
-  });
+  res.json({ message: "Decremented" });
 });
 
 app.get("/api/use-prompt", (req, res) => {
+  if (!ENABLE_RATE_LIMITS) {
+    res.json({ message: "Rate limits disabled" });
+    return;
+  }
+
   const key = rateLimiterKey(req.query.model as string, req.query.fp as string);
   store.increment(key);
-  res.json({
-    message: `Used a token: ${key}`,
-  });
+  res.json({ message: `Used a token: ${key}` });
 });
 
 app.get("/api/examples", (req, res) => {

@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useState, Dispatch, SetStateAction } from "react";
-import { FlowProvider } from "./Flow";
-import { convertTreeToFlow, NodeDims, QATree } from "./GraphPage";
-import { ArrowLeftIcon } from "@heroicons/react/24/solid";
-import { Example } from "./App";
-import "./GraphPageExample.css";
+import { useEffect, useMemo, useState, Dispatch, SetStateAction } from 'react';
+import { FlowProvider } from './Flow';
+import { convertTreeToFlow, NodeDims, QATree } from './GraphPage';
+import { ArrowLeftIcon } from '@heroicons/react/24/solid';
+import type { Example } from './StartPage';
+import './GraphPageExample.css';
 
 export const streamQuestion = async (
   id: string,
@@ -11,19 +11,19 @@ export const streamQuestion = async (
   exampleTree: QATree,
   setResultTree: Dispatch<SetStateAction<QATree>>
 ) => {
-  return new Promise((resolve) => {
+  return new Promise(resolve => {
     const node = exampleTree[id];
 
     let i = 0;
     const intervalQuestion = setInterval(() => {
       i += 2;
       growingTree[id].question = node.question.slice(0, i);
-      setResultTree((prevState) => {
+      setResultTree(prevState => {
         return { ...prevState, ...growingTree };
       });
       if (i >= node.question.length) {
         clearInterval(intervalQuestion);
-        resolve("done streaming question");
+        resolve('done streaming question');
       }
     }, 50);
   });
@@ -35,18 +35,18 @@ export const streamAnswer = async (
   exampleTree: QATree,
   setResultTree: Dispatch<SetStateAction<QATree>>
 ) => {
-  return new Promise((resolve) => {
+  return new Promise(resolve => {
     const node = exampleTree[id];
     let i = 0;
     const intervalAnswer = setInterval(() => {
       i += 2;
       growingTree[id].answer = node.answer.slice(0, i);
-      setResultTree((prevState) => {
+      setResultTree(prevState => {
         return { ...prevState, ...growingTree };
       });
       if (i >= node.answer.length) {
         clearInterval(intervalAnswer);
-        resolve("done streaming answer");
+        resolve('done streaming answer');
       }
     }, 50);
   });
@@ -58,14 +58,14 @@ export const streamQANode = async (
   exampleTree: QATree,
   setResultTree: Dispatch<SetStateAction<QATree>>
 ) => {
-  return new Promise(async (resolve) => {
+  return new Promise(async resolve => {
     // reference text
     const node = exampleTree[id];
 
     if (!(id in growingTree)) {
       growingTree[id] = {
-        question: "",
-        answer: "",
+        question: '',
+        answer: '',
         parent: node.parent,
         children: node.children,
       };
@@ -73,7 +73,7 @@ export const streamQANode = async (
 
     await streamQuestion(id, growingTree, exampleTree, setResultTree);
     await streamAnswer(id, growingTree, exampleTree, setResultTree);
-    resolve("done streaming node");
+    resolve('done streaming node');
   });
 };
 
@@ -83,8 +83,8 @@ export const streamExample = async (
 ) => {
   const growingTree: QATree = {};
   const exampleTree = example.tree;
-  let layer: string[] = ["0"];
-  await streamQANode("0", growingTree, exampleTree, setResultTree);
+  let layer: string[] = ['0'];
+  await streamQANode('0', growingTree, exampleTree, setResultTree);
   while (true) {
     if (layer.length === 0) {
       break;
@@ -132,7 +132,7 @@ export function GraphPageExample({ example, onExit }: GraphPageExampleProps) {
       />
       <div
         onClick={() => {
-          console.log("boom");
+          console.log('boom');
           onExit();
         }}
         className="absolute top-4 left-4 bg-black/40 rounded p-2 cursor-pointer hover:bg-black/60 backdrop-blur touch-none"

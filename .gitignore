@@ -1,4 +1,12 @@
-server/.env
+node_modules/
+dist/
+.env
+.env.*
+!.env.example
+.DS_Store
+*.log
+coverage/
+.vscode/
 
 # Logs
 logs
@@ -9,8 +17,6 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
-node_modules
-dist
 dist-ssr
 *.local
 
@@ -18,7 +24,6 @@ dist-ssr
 .vscode/*
 !.vscode/extensions.json
 .idea
-.DS_Store
 *.suo
 *.ntvs*
 *.njsproj
@@ -28,3 +33,4 @@ dist-ssr
 /playwright-report/
 /blob-report/
 /playwright/.cache/
+.specstory/

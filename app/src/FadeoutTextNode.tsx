@@ -5,6 +5,7 @@ import "./fadeout-text.css";
 import classNames from "classnames";
 import { NodeDims } from "./GraphPage";
 import { useFocused } from "./FocusedContext";
+import TextareaAutosize from "react-textarea-autosize";
 
 const getScaleFactor = (): number => {
   const viewportElement = document.querySelector(
@@ -41,6 +42,9 @@ type FadeoutTextNodeProps = {
     nodeID: string;
     setNodeDims: React.Dispatch<React.SetStateAction<NodeDims>>;
     question: boolean;
+    hasAnswer: boolean;
+    onAnswer: (nodeID: string) => void;
+    onAddUserQuestion: (nodeID: string) => void;
   };
 };
 export const FadeoutTextNode: React.FC<FadeoutTextNodeProps> = (props) => {
@@ -71,7 +75,7 @@ export const FadeoutTextNode: React.FC<FadeoutTextNodeProps> = (props) => {
       onMouseDown={(e) => {
         e.stopPropagation();
       }}
-      className={classNames("fadeout-text border", {
+      className={classNames("fadeout-text border relative", {
         "cursor-pointer": !expanded,
         "cursor-default": expanded,
         "border-sky-400": props.data.question,
@@ -101,6 +105,66 @@ export const FadeoutTextNode: React.FC<FadeoutTextNodeProps> = (props) => {
         style={expanded ? { WebkitMaskImage: "none" } : {}}
       >
         <div ref={ref}>{props.data.text}</div>
+      </div>
+
+      {/* Add Answer button for question nodes that haven't been answered */}
+      {props.data.question && !props.data.hasAnswer && (
+        <button
+          className="absolute bottom-2 right-2 px-3 py-1 bg-blue-600 rounded text-sm hover:bg-blue-500"
+          onClick={(e) => {
+            e.stopPropagation();
+            props.data.onAnswer(props.data.nodeID);
+          }}
+        >
+          Answer
+        </button>
+      )}
+
+      {/* Add "Ask Question" button for answer nodes */}
+      {!props.data.question && (
+        <button
+          className="absolute bottom-2 right-2 px-3 py-1 bg-zinc-700 rounded text-sm hover:bg-zinc-600"
+          onClick={(e) => {
+            e.stopPropagation();
+            props.data.onAddUserQuestion(props.data.nodeID);
+          }}
+        >
+          Ask Question
+        </button>
+      )}
+    </div>
+  );
+};
+
+// Add new type for user input nodes
+export const UserInputNode = ({ data }: { data: any }) => {
+  const [question, setQuestion] = useState(data.initialQuestion || "");
+  
+  useEffect(() => {
+    setQuestion(data.initialQuestion || "");
+  }, [data.initialQuestion]);
+
+  return (
+    <div className="bg-zinc-800/50 backdrop-blur rounded p-4 min-w-[200px] border border-white/20">
+      <TextareaAutosize
+        className="w-full bg-transparent text-white outline-none resize-none"
+        placeholder="Type your question..."
+        value={question}
+        onChange={(e) => setQuestion(e.target.value)}
+      />
+      <div className="flex gap-2 mt-2">
+        <button 
+          className="px-3 py-1 bg-zinc-700 rounded hover:bg-zinc-600 text-sm"
+          onClick={() => data.onSave(question)}
+        >
+          Save
+        </button>
+        <button 
+          className="px-3 py-1 bg-blue-600 rounded hover:bg-blue-500 text-sm"
+          onClick={() => data.onAsk(question)}
+        >
+          Ask
+        </button>
       </div>
     </div>
   );

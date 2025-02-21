@@ -1,8 +1,29 @@
 {
-  "devDependencies": {
-    "@playwright/test": "^1.49.1",
-    "@types/node": "^22.10.2",
-    "playwright": "^1.49.1"
-  },
-  "scripts": {}
+    "devDependencies": {
+        "@playwright/test": "^1.49.1",
+        "@types/node": "^22.10.2",
+        "@typescript-eslint/eslint-plugin": "^8.24.1",
+        "@typescript-eslint/parser": "^8.24.1",
+        "concurrently": "^9.1.2",
+        "eslint": "^9.20.1",
+        "eslint-config-prettier": "^10.0.1",
+        "eslint-plugin-import": "^2.31.0",
+        "eslint-plugin-prettier": "^5.2.3",
+        "eslint-plugin-react": "^7.37.4",
+        "eslint-plugin-react-hooks": "^5.1.0",
+        "playwright": "^1.49.1",
+        "prettier": "^3.5.1"
+    },
+    "scripts": {
+        "dev": "concurrently \"pnpm run dev:app\" \"pnpm run dev:server\"",
+        "dev:app": "cd app && pnpm run dev",
+        "dev:server": "cd server && pnpm run dev",
+        "lint": "eslint . --ext .ts,.tsx --max-warnings 0",
+        "lint:fix": "eslint . --ext .ts,.tsx --fix",
+        "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md}\"",
+        "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,json,md}\"",
+        "type-check": "pnpm run type-check:app && pnpm run type-check:server",
+        "type-check:app": "cd app && tsc --noEmit",
+        "type-check:server": "cd server && tsc --noEmit"
+    }
 }

@@ -25,5 +25,10 @@
     "ts-node-dev": "^2.0.0",
     "typescript": "^5.0.4",
     "ws": "^8.13.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "protobufjs"
+    ]
   }
 }

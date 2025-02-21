@@ -1,4 +1,4 @@
-import React, { useEffect } from "react";
+import React, { useEffect } from 'react';
 
 import ReactFlow, {
   Edge,
@@ -7,27 +7,24 @@ import ReactFlow, {
   ReactFlowProvider,
   useEdgesState,
   useNodesState,
-} from "reactflow";
-import dagre from "dagre";
+  NodeProps,
+  EdgeProps,
+} from 'reactflow';
+import dagre from 'dagre';
 
-import "reactflow/dist/style.css";
-import { FadeoutTextNode } from "./FadeoutTextNode";
-import { DeletableEdge } from "./DeletableEdge";
-import { NodeDims } from "./GraphPage";
-import { getFingerprint } from "./main";
-import { SERVER_HOST_WS } from "./constants";
+import 'reactflow/dist/style.css';
+import { FadeoutTextNode } from './FadeoutTextNode';
+import { DeletableEdge } from './DeletableEdge';
+import { NodeDims } from './GraphPage';
+import { getFingerprint } from './main';
+import { SERVER_HOST_WS } from './constants';
 
 const nodeTypes = { fadeText: FadeoutTextNode };
 const edgeTypes = { deleteEdge: DeletableEdge };
 
 // Layout the nodes automatically
-const layoutElements = (
-  nodes: Node[],
-  edges: Edge[],
-  nodeDims: NodeDims,
-  direction = "LR"
-) => {
-  const isHorizontal = direction === "LR";
+const layoutElements = (nodes: Node[], edges: Edge[], nodeDims: NodeDims, direction = 'LR') => {
+  const isHorizontal = direction === 'LR';
   const dagreGraph = new dagre.graphlib.Graph();
   dagreGraph.setDefaultEdgeLabel(() => ({}));
 
@@ -35,24 +32,24 @@ const layoutElements = (
   const nodeHeight = 170;
   dagreGraph.setGraph({ rankdir: direction, nodesep: 100 });
 
-  nodes.forEach((node) => {
+  nodes.forEach(node => {
     if (node.id in nodeDims) {
       dagreGraph.setNode(node.id, {
-        width: nodeDims[node.id]["width"],
-        height: nodeDims[node.id]["height"],
+        width: nodeDims[node.id]['width'],
+        height: nodeDims[node.id]['height'],
       });
     } else {
       dagreGraph.setNode(node.id, { width: nodeWidth, height: nodeHeight });
     }
   });
 
-  edges.forEach((edge) => {
+  edges.forEach(edge => {
     dagreGraph.setEdge(edge.source, edge.target);
   });
 
   dagre.layout(dagreGraph);
 
-  nodes.forEach((node) => {
+  nodes.forEach(node => {
     const nodeWithPosition = dagreGraph.node(node.id);
     node.targetPosition = isHorizontal ? Position.Left : Position.Top;
     node.sourcePosition = isHorizontal ? Position.Right : Position.Bottom;
@@ -70,6 +67,28 @@ const layoutElements = (
   return { nodes, edges };
 };
 
+export interface FlowProviderProps {
+  flowNodes: Node[];
+  flowEdges: Edge[];
+  nodeDims: NodeDims;
+  deleteBranch: (id: string) => void;
+  nodeTypes?: Record<string, React.ComponentType<NodeProps>>;
+}
+
+interface DeletableEdgeProps extends EdgeProps {
+  data: {
+    deleteBranch: (id: string) => void;
+  };
+}
+
+export const DeletableEdge: React.FC<DeletableEdgeProps> = (
+  {
+    // ... existing props
+  }
+) => {
+  // ... existing implementation
+};
+
 export const openai_browser = async (
   prompt: string,
   opts: {
@@ -79,70 +98,58 @@ export const openai_browser = async (
     onChunk: (chunk: string) => void;
   }
 ) => {
-  return new Promise(async (resolve, reject) => {
-    if (opts.temperature < 0 || opts.temperature > 1) {
-      console.error(
-        `Temperature is set to an invalid value: ${opts.temperature}`
-      );
-      return;
-    }
-    const params = {
+  const response = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'post',
+    body: JSON.stringify({
       model: opts.model,
       stream: true,
       messages: [
         {
-          role: "system",
+          role: 'system',
           content:
-            "You are a helpful assistant. Non-JSON answers should be short, with a _max_ of 100 words.",
+            'You are a helpful assistant. Non-JSON answers should be short, with a _max_ of 100 words.',
         },
-        { role: "user", content: prompt },
+        { role: 'user', content: prompt },
       ],
       max_tokens: 200,
       temperature: opts.temperature,
       n: 1,
-    };
-    const headers = {
-      "Content-Type": "application/json",
+    }),
+    headers: {
+      'Content-Type': 'application/json',
       Authorization: `Bearer ${opts.apiKey}`,
-    };
-    const response = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "post",
-      body: JSON.stringify(params),
-      headers,
-    });
-    const reader = response.body
-      .pipeThrough(new TextDecoderStream())
-      .getReader();
-    StreamLoop: while (true) {
-      const { value } = await reader.read();
-      try {
-        const maybeError = JSON.parse(value);
-        if ("error" in maybeError) {
-          reject(maybeError.error.message);
-          break StreamLoop;
-        }
-      } catch (error) {}
-      const lines = value.split("\n").filter((l) => l.trim() !== "");
-      for (const line of lines) {
-        const maybeJsonString = line.replace(/^data: /, "");
-        console.log("maybeJsonString", maybeJsonString);
-        if (maybeJsonString == "[DONE]") {
-          resolve("stream is done");
-          break StreamLoop;
-        }
+    },
+  });
+
+  if (!response.body) {
+    throw new Error('No response body');
+  }
+
+  const reader = response.body.getReader();
+  let buffer = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    const text = new TextDecoder().decode(value);
+    buffer += text;
+
+    const lines = buffer.split('\n').filter(l => l.trim() !== '');
+    for (const line of lines) {
+      if (line.startsWith('data: ')) {
+        const jsonStr = line.slice(6);
+        if (jsonStr === '[DONE]') continue;
         try {
-          const payload = JSON.parse(maybeJsonString);
-          const completion = payload.choices[0].delta.content;
-          if (completion != null) {
-            opts.onChunk(completion);
-          }
-        } catch (error) {
-          console.error(error);
-          reject(error);
+          const json = JSON.parse(jsonStr);
+          const content = json.choices[0]?.delta?.content;
+          if (content) opts.onChunk(content);
+        } catch (e) {
+          console.error('Failed to parse JSON:', e);
         }
       }
     }
-  });
+  }
 };
 
 export const openai_server = async (
@@ -156,9 +163,7 @@ export const openai_server = async (
   const fingerprint = await getFingerprint();
   return new Promise((resolve, reject) => {
     if (opts.temperature < 0 || opts.temperature > 1) {
-      console.error(
-        `Temperature is set to an invalid value: ${opts.temperature}`
-      );
+      console.error(`Temperature is set to an invalid value: ${opts.temperature}`);
       return;
     }
     // Establish a WebSocket connection to the server
@@ -174,11 +179,11 @@ export const openai_server = async (
       );
     };
     // Listen for streaming data from the server
-    ws.onmessage = (event) => {
+    ws.onmessage = event => {
       const message = event.data;
       // Check if the stream has ended
-      if (message === "[DONE]") {
-        console.log("Stream has ended");
+      if (message === '[DONE]') {
+        console.log('Stream has ended');
         resolve(message);
         ws.close();
       } else {
@@ -190,14 +195,14 @@ export const openai_server = async (
     };
 
     // Handle the WebSocket "error" event
-    ws.onerror = (error) => {
-      console.error("WebSocket error:", error);
+    ws.onerror = error => {
+      console.error('WebSocket error:', error);
       reject(error);
     };
 
     // Handle the WebSocket "close" event
-    ws.onclose = (event) => {
-      console.log("WebSocket connection closed:", event);
+    ws.onclose = event => {
+      console.log('WebSocket connection closed:', event);
     };
   });
 };
@@ -213,7 +218,7 @@ export const openai = async (
   }
 ) => {
   if (opts.apiKey) {
-    console.log("yo using the browser api key");
+    console.log('yo using the browser api key');
     return openai_browser(prompt, {
       apiKey: opts.apiKey,
       model: opts.model,
@@ -228,19 +233,9 @@ export const openai = async (
   });
 };
 
-type FlowProps = {
-  flowNodes: Node[];
-  flowEdges: Edge[];
-  nodeDims: NodeDims;
-  deleteBranch: (id: string) => void;
-};
-export const Flow: React.FC<FlowProps> = (props) => {
-  const [nodes, setNodes, onNodesChangeDefault] = useNodesState<Node[]>(
-    props.flowNodes
-  );
-  const [edges, setEdges, onEdgesChangeDefault] = useEdgesState<Edge[]>(
-    props.flowEdges
-  );
+export const Flow: React.FC<FlowProviderProps> = props => {
+  const [nodes, setNodes, onNodesChangeDefault] = useNodesState<Node[]>(props.flowNodes);
+  const [edges, setEdges, onEdgesChangeDefault] = useEdgesState<Edge[]>(props.flowEdges);
 
   // when props.flowNodes changes, then I need to call setNodes
   useEffect(() => {
@@ -269,7 +264,7 @@ export const Flow: React.FC<FlowProps> = (props) => {
         // fitView
         panOnScroll
         minZoom={0.1}
-        nodeTypes={nodeTypes}
+        nodeTypes={props.nodeTypes}
         edgeTypes={edgeTypes}
         nodes={laid.nodes}
         edges={laid.edges}
@@ -281,13 +276,7 @@ export const Flow: React.FC<FlowProps> = (props) => {
   );
 };
 
-type FlowProviderProps = {
-  flowNodes: Node[];
-  flowEdges: Edge[];
-  nodeDims: NodeDims;
-  deleteBranch: (id: string) => void;
-};
-export const FlowProvider: React.FC<FlowProviderProps> = (props) => {
+export const FlowProvider: React.FC<FlowProviderProps> = props => {
   return (
     <ReactFlowProvider>
       <Flow {...props} />
