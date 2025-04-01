@@ -1,7 +1,3 @@
----
-description: Cursor rules derived by SpecStory from the project AI interaction history
-globs: *
----
 
 ## PROJECT OVERVIEW
 
@@ -53,7 +49,7 @@ The project uses a structured folder organization to enhance maintainability and
 - The WebSocket service should handle reconnections and provide feedback to the user on connection status.
 - The graph data should be persisted locally using localStorage for session persistence.
 - The graph data should be exportable in JSON, SVG, and PNG formats.
-- **New Node Generation Behavior:** The automatic generation of new question nodes should stop after creating the initial two question nodes. These nodes will contain an "answer" button, which triggers the generation of the answer node only when clicked. This behavior is implemented in `app/src/GraphPage.tsx` and `app/src/FadeoutTextNode.tsx`.  The changes are documented in 2025-04-01_22-43-control-node-graph-behavior.md and 2025-04-02_09-13-modify-graph-node-answer-generation-logic.md.  Key files involved: `app/src/GraphPage.tsx`, `app/src/FadeoutTextNode.tsx`, `app/src/Flow.tsx`, `app/src/personas.ts`.
+- **New Node Generation Behavior:** The automatic generation of new question nodes should stop after creating the initial two question nodes.  These nodes should contain an "answer" button, which triggers the generation of the answer node only when clicked. This behavior is implemented in `app/src/GraphPage.tsx` and `app/src/FadeoutTextNode.tsx`.  The changes are documented in 2025-04-01_22-43-control-node-graph-behavior.md and 2025-04-02_09-13-modify-graph-node-answer-generation-logic.md.
 
 
 ## WORKFLOW & RELEASE RULES

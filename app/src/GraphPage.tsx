@@ -9,9 +9,9 @@ import {
 } from "@heroicons/react/24/solid";
 import { closePartialJson, downloadDataAsJson } from "./util/json";
 import { PERSONAS } from "./personas";
-import { ApiKey } from "./App";
+import type { ApiKey } from "./App";
 import { SERVER_HOST } from "./constants";
-import { MODELS, Model } from "./models";
+import { MODELS } from "./models";
 import { FocusedContextProvider, isChild } from "./FocusedContext";
 
 export interface QATreeNode {
@@ -37,14 +37,24 @@ type TreeNode = Node & {
   parentNodeID: string;
 };
 
-export const convertTreeToFlow = (
+type ConvertTreeToFlowProps = (
   tree: QATree,
   setNodeDims: any,
   deleteBranch: any,
-  playing: boolean
-): any => {
+  playing: boolean,
+  generateAnswerForNode: (nodeId: string) => Promise<void>
+) => any;
+
+export const convertTreeToFlow: ConvertTreeToFlowProps = (
+  tree,
+  setNodeDims,
+  deleteBranch,
+  playing,
+  generateAnswerForNode
+) => {
   const nodes: TreeNode[] = [];
   Object.keys(tree).forEach((key) => {
+    const isQuestion = true;
     nodes.push({
       id: `q-${key}`,
       type: "fadeText",
@@ -52,12 +62,15 @@ export const convertTreeToFlow = (
         text: tree[key].question,
         nodeID: `q-${key}`,
         setNodeDims,
-        question: true,
+        question: isQuestion,
+        hasAnswer: !!tree[key].answer,
+        onGenerateAnswer: generateAnswerForNode,
       },
       position: { x: 0, y: 0 },
       parentNodeID: tree[key].parent != null ? `a-${tree[key].parent}` : "",
     });
     if (tree[key].answer) {
+      const isAnswer = false;
       nodes.push({
         id: `a-${key}`,
         type: "fadeText",
@@ -65,7 +78,7 @@ export const convertTreeToFlow = (
           text: tree[key].answer,
           nodeID: `a-${key}`,
           setNodeDims,
-          question: false,
+          question: isAnswer,
         },
         position: { x: 0, y: 0 },
         parentNodeID: `q-${key}`,
@@ -151,7 +164,7 @@ interface NodeGeneratorOpts {
   qaTree: QATree;
   focusedId: string | null;
   onChangeQATree: () => void;
-  onNodeGenerated: () => void;
+  onNodeGenerated: (completedNodeId: string) => void;
 }
 
 async function* nodeGenerator(
@@ -195,6 +208,7 @@ async function* nodeGenerator(
       },
     });
 
+    opts.onChangeQATree();
     yield;
 
     const ids: string[] = [];
@@ -231,7 +245,7 @@ async function* nodeGenerator(
       }
     );
 
-    opts.onNodeGenerated();
+    opts.onNodeGenerated(nodeId);
     yield;
 
     ids.forEach((id) => {
@@ -363,8 +377,6 @@ class MultiNodeGenerator {
   }
 }
 
-const NODE_LIMIT_PER_PLAY = 8;
-
 function GraphPage(props: {
   seedQuery: string;
   model: string;
@@ -378,10 +390,94 @@ function GraphPage(props: {
   const generatorRef = useRef<MultiNodeGenerator>();
   const [playing, setPlaying] = useState(true);
   const [fullyPaused, setFullyPaused] = useState(false);
-  const nodeCountRef = useRef(0);
-  const pauseAtNodeCountRef = useRef(NODE_LIMIT_PER_PLAY);
+  const initialGenerationPaused = useRef(false);
+
+  const generateAnswerForNode = useCallback(
+    async (nodeId: string) => {
+      console.log("Manual trigger for node:", nodeId);
+      const node = qaTreeRef.current[nodeId];
+      if (!node || node.answer) {
+        console.warn(`Node ${nodeId} not found or already has answer.`);
+        return;
+      }
+
+      node.startedProcessing = true;
+      setResultTree(JSON.parse(JSON.stringify(qaTreeRef.current)));
+
+      const commonOpts = {
+        apiKey: props.apiKey,
+        model: props.model,
+        persona: props.persona,
+        qaTree: qaTreeRef.current,
+      };
+
+      try {
+        const promptForAnswer = PERSONAS[commonOpts.persona].getPromptForAnswer(
+          node,
+          commonOpts.qaTree
+        );
+        await openai(promptForAnswer, {
+          apiKey: commonOpts.apiKey.key,
+          temperature: 1,
+          model: MODELS[commonOpts.model].key,
+          onChunk: (chunk) => {
+            const currentNode = commonOpts.qaTree[nodeId];
+            if (currentNode) {
+              currentNode.answer += chunk;
+              setResultTree(JSON.parse(JSON.stringify(commonOpts.qaTree)));
+            }
+          },
+        });
+        setResultTree(JSON.parse(JSON.stringify(commonOpts.qaTree)));
+
+        const questionIds: string[] = [];
+        await getQuestions(
+          commonOpts.apiKey,
+          commonOpts.model,
+          commonOpts.persona,
+          node,
+          commonOpts.qaTree,
+          (partial) => {
+            if (partial.length > questionIds.length) {
+              for (let i = questionIds.length; i < partial.length; i++) {
+                const newId = Math.random().toString(36).substring(2, 9);
+                questionIds.push(newId);
+                commonOpts.qaTree[newId] = {
+                  question: "",
+                  parent: nodeId,
+                  answer: "",
+                };
+                const parentNode = commonOpts.qaTree[nodeId];
+                if (parentNode) {
+                  if (!parentNode.children) parentNode.children = [];
+                  parentNode.children.push(newId);
+                }
+              }
+            }
+            for (let i = 0; i < partial.length; i++) {
+              if(commonOpts.qaTree[questionIds[i]]) {
+                commonOpts.qaTree[questionIds[i]].question = partial[i].question;
+              }
+            }
+            setResultTree(JSON.parse(JSON.stringify(commonOpts.qaTree)));
+          }
+        );
+        setResultTree(JSON.parse(JSON.stringify(commonOpts.qaTree)));
+
+      } catch (error) {
+        console.error(`Error generating answer/questions for node ${nodeId}:`, error);
+        if(qaTreeRef.current[nodeId]) {
+          qaTreeRef.current[nodeId].startedProcessing = false;
+          qaTreeRef.current[nodeId].answer += "\\n\\nError occurred.";
+          setResultTree(JSON.parse(JSON.stringify(qaTreeRef.current)));
+        }
+      }
+    },
+    [props.apiKey, props.model, props.persona]
+  );
 
   useEffect(() => {
+    initialGenerationPaused.current = false;
     questionQueueRef.current = ["0"];
     qaTreeRef.current = {
       "0": {
@@ -403,10 +499,12 @@ function GraphPage(props: {
         onChangeQATree: () => {
           setResultTree(JSON.parse(JSON.stringify(qaTreeRef.current)));
         },
-        onNodeGenerated: () => {
-          nodeCountRef.current += 1;
-          if (nodeCountRef.current >= pauseAtNodeCountRef.current) {
-            pause();
+        onNodeGenerated: (completedNodeId: string) => {
+          if (completedNodeId === '0' && !initialGenerationPaused.current) {
+             console.log("Initial questions generated, pausing generator.");
+             generatorRef.current?.pause();
+             setPlaying(false);
+             initialGenerationPaused.current = true;
           }
         },
       },
@@ -441,13 +539,13 @@ function GraphPage(props: {
   );
 
   const { nodes, edges } = useMemo(() => {
-    return convertTreeToFlow(resultTree, setNodeDims, deleteBranch, playing);
+    return convertTreeToFlow(resultTree, setNodeDims, deleteBranch, playing, generateAnswerForNode);
   }, [resultTree, playing]);
 
   function resume() {
-    pauseAtNodeCountRef.current = nodeCountRef.current + NODE_LIMIT_PER_PLAY;
-    generatorRef.current?.resume();
-    setPlaying(true);
+    if (!playing) {
+       console.log("Resume clicked, but generation is now manual via 'Answer' buttons.");
+    }
   }
 
   function pause() {
@@ -460,23 +558,6 @@ function GraphPage(props: {
       qaTree={resultTree}
       onSetFocusedId={(id) => {
         generatorRef.current?.setFocusedId(id);
-        const newQueue: string[] = [];
-        for (const [id, node] of Object.entries(resultTree)) {
-          if (
-            !node.children &&
-            !node.answer &&
-            (id == null || isChild(resultTree, id, id))
-          ) {
-            newQueue.push(id);
-          }
-        }
-        console.log("setting queue", questionQueueRef.current);
-        questionQueueRef.current.splice(
-          0,
-          questionQueueRef.current.length,
-          ...newQueue
-        );
-        console.log("set queue", questionQueueRef.current);
       }}
     >
       <div className="text-sm">
@@ -485,6 +566,7 @@ function GraphPage(props: {
           flowEdges={edges}
           nodeDims={nodeDims}
           deleteBranch={deleteBranch}
+          generateAnswerForNode={generateAnswerForNode}
         />
         <div className="fixed right-4 bottom-4 flex items-center space-x-2">
           {SERVER_HOST.includes("localhost") && (
@@ -516,7 +598,7 @@ function GraphPage(props: {
                 if (playing) {
                   pause();
                 } else {
-                  resume();
+                  console.log("Play button clicked, but generation is manual.");
                 }
               }}
             >

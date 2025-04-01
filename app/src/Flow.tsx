@@ -93,7 +93,7 @@ export const openai_browser = async (
         {
           role: "system",
           content:
-            "You are a helpful assistant. Non-JSON answers should be short, with a _max_ of 100 words.",
+            "You are a helpful assistant. Always respond in English.",
         },
         { role: "user", content: prompt },
       ],

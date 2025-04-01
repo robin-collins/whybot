@@ -41,6 +41,8 @@ type FadeoutTextNodeProps = {
     nodeID: string;
     setNodeDims: React.Dispatch<React.SetStateAction<NodeDims>>;
     question: boolean;
+    hasAnswer?: boolean;
+    onGenerateAnswer?: (nodeId: string) => void;
   };
 };
 export const FadeoutTextNode: React.FC<FadeoutTextNodeProps> = (props) => {
@@ -92,6 +94,7 @@ export const FadeoutTextNode: React.FC<FadeoutTextNodeProps> = (props) => {
           : Math.min(140 + 16 + 2, actualHeight + 16 + 2),
         transition:
           "transform 0.5s, height 0.5s, width 0.5s, opacity 0.15s, border 0.15s",
+        paddingBottom: props.data.question && !props.data.hasAnswer ? "28px" : "8px",
       }}
     >
       <Handle type={"target"} position={Position.Left} />
@@ -102,6 +105,20 @@ export const FadeoutTextNode: React.FC<FadeoutTextNodeProps> = (props) => {
       >
         <div ref={ref}>{props.data.text}</div>
       </div>
+      {props.data.question && !props.data.hasAnswer && props.data.onGenerateAnswer && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            if (props.data.onGenerateAnswer) {
+              props.data.onGenerateAnswer(props.data.nodeID.slice(2));
+            }
+          }}
+          className="absolute bottom-1 right-1 bg-sky-600 text-white px-2 py-0.5 rounded text-xs hover:bg-sky-700 z-10 cursor-pointer"
+          style={{ fontSize: '0.7rem', lineHeight: '1rem', padding: '2px 6px'}}
+        >
+          Answer
+        </button>
+      )}
     </div>
   );
 };
