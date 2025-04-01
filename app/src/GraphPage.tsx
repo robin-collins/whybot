@@ -9,7 +9,7 @@ import {
 } from "@heroicons/react/24/solid";
 import { closePartialJson, downloadDataAsJson } from "./util/json";
 import { PERSONAS } from "./personas";
-import type { ApiKey } from "./App";
+import type { ApiKey } from "./APIKeyModal";
 import { SERVER_HOST } from "./constants";
 import { MODELS } from "./models";
 import { FocusedContextProvider, isChild } from "./FocusedContext";
@@ -566,7 +566,6 @@ function GraphPage(props: {
           flowEdges={edges}
           nodeDims={nodeDims}
           deleteBranch={deleteBranch}
-          generateAnswerForNode={generateAnswerForNode}
         />
         <div className="fixed right-4 bottom-4 flex items-center space-x-2">
           {SERVER_HOST.includes("localhost") && (

@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from "react";
 import useMeasure from "react-use-measure";
 import { Handle, Position } from "reactflow";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import "./fadeout-text.css";
 import classNames from "classnames";
 import { NodeDims } from "./GraphPage";
@@ -67,7 +69,7 @@ export const FadeoutTextNode: React.FC<FadeoutTextNodeProps> = (props) => {
         // Now I have to call setNodeDims with the nodeID and set the width and height
         props.data.setNodeDims((prevState) => ({
           ...prevState,
-          [props.data.nodeID]: { width: 250, height: actualHeight + 36 },
+          [props.data.nodeID]: { width: 250, height: actualHeight + (props.data.question && !props.data.hasAnswer ? 36 : 18) },
         }));
       }}
       onMouseDown={(e) => {
@@ -77,7 +79,7 @@ export const FadeoutTextNode: React.FC<FadeoutTextNodeProps> = (props) => {
         "cursor-pointer": !expanded,
         "cursor-default": expanded,
         "border-sky-400": props.data.question,
-        "border-white/50": !props.data.question,
+        "border-green-400": !props.data.question,
         "opacity-40":
           focusedId != null && !isInFocusedBranch(props.data.nodeID.slice(2)),
         "border-yellow-100":
@@ -89,9 +91,11 @@ export const FadeoutTextNode: React.FC<FadeoutTextNodeProps> = (props) => {
         padding: "8px 12px",
         maxWidth: 250,
         overflow: "hidden",
-        height: expanded
-          ? actualHeight + 16 + 2
-          : Math.min(140 + 16 + 2, actualHeight + 16 + 2),
+        height: props.data.question
+          ? expanded
+            ? actualHeight + 16 + 2
+            : Math.min(140 + 16 + 2, actualHeight + 16 + 2)
+          : "auto",
         transition:
           "transform 0.5s, height 0.5s, width 0.5s, opacity 0.15s, border 0.15s",
         paddingBottom: props.data.question && !props.data.hasAnswer ? "28px" : "8px",
@@ -100,10 +104,16 @@ export const FadeoutTextNode: React.FC<FadeoutTextNodeProps> = (props) => {
       <Handle type={"target"} position={Position.Left} />
       <Handle type={"source"} position={Position.Right} />
       <div
-        className="fadeout-text-inner h-[140px]"
-        style={expanded ? { WebkitMaskImage: "none" } : {}}
+        className={classNames("fadeout-text-inner prose prose-sm max-w-none", {
+          "h-[140px]": props.data.question && !expanded,
+        })}
+        style={expanded || !props.data.question ? { WebkitMaskImage: "none" } : {}}
       >
-        <div ref={ref}>{props.data.text}</div>
+        <div ref={ref}>
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>
+            {props.data.text}
+          </ReactMarkdown>
+        </div>
       </div>
       {props.data.question && !props.data.hasAnswer && props.data.onGenerateAnswer && (
         <button

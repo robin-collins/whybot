@@ -43,7 +43,7 @@ export const PERSONAS: { [key: string]: Persona } = {
             return `
       You were previously asked this question: ${parentNode.question}
       You responded with this answer: ${parentNode.answer}
-      Given that context, please provide a concise answer (in the English language) to this follow up question: ${node.question}`;
+      Given that context, please provide a concise answer (in markdown syntax in the English language) to this follow up question: ${node.question}`;
         },
         getPromptForQuestions: (node) => {
             // 85 + 29 + 4 + 107 + ~80 for node.answer
@@ -79,7 +79,7 @@ export const PERSONAS: { [key: string]: Persona } = {
             return `
       You were previously asked this question: ${parentNode.question}
       You responded with this answer: ${parentNode.answer}
-      Given that context, please provide a short & concise answer (in the English language) to this follow up question: ${node.question}`;
+      Given that context, please provide a short & concise answer (in markdown syntax in the English language) to this follow up question: ${node.question}`;
         },
         getPromptForQuestions: (node) => {
             // 415 tokens
@@ -92,7 +92,7 @@ export const PERSONAS: { [key: string]: Persona } = {
             Information/Answer to the question: ${node.answer}
 
             For example, if you think the question "Why is the sky blue?" is interesting, you would write: [{"question": "Why is the sky blue?", "score": 10, "persona_summary": "Young man thinking about the scientific nature of the universe and our planet"}]
-            Your answer should be in English.
+            Your answer should be in markdown syntax in the English language.
             Your answer: `;
         },
     },
