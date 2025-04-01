@@ -31,8 +31,8 @@ const db = getFirestore();
 const store = new MemoryStore();
 
 const PROMPT_LIMITS = {
-  "openai/gpt3.5": 5,
-  "openai/gpt4": 0,
+  "openai/gpt-4o-mini": 50,
+  "openai/gpt-4o": 10,
 };
 const PORT = process.env.PORT || 6823;
 
@@ -41,9 +41,9 @@ function rateLimiterKey(model: string, fingerprint: string) {
 }
 
 const rateLimiters = {
-  "openai/gpt3.5": rateLimit({
+  "openai/gpt-4o-mini": rateLimit({
     windowMs: 24 * 60 * 60 * 1000, // 24 hours in milliseconds
-    max: PROMPT_LIMITS["openai/gpt3.5"],
+    max: PROMPT_LIMITS["openai/gpt-4o-mini"],
     message: "You have exceeded the 5 requests in 24 hours limit!", // message to send when a user has exceeded the limit
     keyGenerator: (req) => {
       return rateLimiterKey(req.query.model as string, req.query.fp as string);
@@ -52,9 +52,9 @@ const rateLimiters = {
     legacyHeaders: false,
     standardHeaders: true,
   }),
-  "openai/gpt4": rateLimit({
+  "openai/gpt-4o": rateLimit({
     windowMs: 24 * 60 * 60 * 1000, // 24 hours in milliseconds
-    max: PROMPT_LIMITS["openai/gpt4"],
+    max: PROMPT_LIMITS["openai/gpt-4o"],
     message: "You have exceeded the 1 request per day limit!", // message to send when a user has exceeded the limit
     keyGenerator: (req) => {
       return req.query.fp + "";

@@ -221,7 +221,7 @@ function StartPage(props: {
                                     setQuery("");
                                     setRandomQuestionLoading(true);
                                     await openai(PERSONAS[props.persona].promptForRandomQuestion, {
-                                        model: "gpt-3.5-turbo",
+                                        model: "gpt-4o-mini",
                                         apiKey: props.apiKey.key,
                                         temperature: 1,
                                         onChunk: (chunk) => {
