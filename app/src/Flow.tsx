@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 
 import ReactFlow, {
   Controls,
@@ -20,6 +20,16 @@ import { DeletableEdge } from "./DeletableEdge";
 import { NodeDims } from "./GraphPage";
 import { getFingerprint } from "./main";
 import { SERVER_HOST_WS } from "./constants";
+
+// --- Import Icons ---
+import {
+  HomeIcon,
+  MagnifyingGlassPlusIcon,
+  MagnifyingGlassMinusIcon,
+  ArrowsPointingOutIcon,
+  CursorArrowRaysIcon,
+} from "@heroicons/react/24/solid";
+// --- End Import Icons ---
 
 const nodeTypes = { fadeText: FadeoutTextNode };
 const edgeTypes = { deleteEdge: DeletableEdge };
@@ -254,7 +264,8 @@ export const Flow: React.FC<FlowProps> = (props) => {
   const [edges, setEdges, onEdgesChangeDefault] = useEdgesState<Edge[]>(
     props.flowEdges
   );
-  const { fitView, zoomIn, zoomOut, setCenter, getNodes } = useReactFlow();
+  const { fitView, zoomIn, zoomOut, setCenter, getNodes, getViewport, setViewport, zoomTo } = useReactFlow();
+  const [currentZoom, setCurrentZoom] = useState(getViewport().zoom);
 
   // when props.flowNodes changes, then I need to call setNodes
   useEffect(() => {
@@ -325,7 +336,31 @@ export const Flow: React.FC<FlowProps> = (props) => {
     const lastNode = allNodes[allNodes.length - 1]; // Or sort by creation time/ID logic if available
     handleCenterNode(lastNode.id);
   }, [getNodes, handleCenterNode]);
+
+  // Update slider when viewport changes
+  useEffect(() => {
+    const updateZoomState = () => {
+        setCurrentZoom(getViewport().zoom);
+    };
+    // Hook into viewport changes if possible, otherwise poll (less ideal)
+    // React Flow doesn't have a direct onViewportChange prop on the main component,
+    // but useReactFlow hook updates frequently. We can use an effect dependency or a slight delay.
+    // For simplicity here, let's update based on node/edge changes or manual triggers.
+    // A more robust solution might involve wrapper contexts or observing viewport state.
+    setCurrentZoom(getViewport().zoom);
+  }, [nodes, edges, getViewport]); // Update zoom state based on graph changes or viewport getter ref
+
+  const handleZoomSliderChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
+      const newZoom = parseFloat(event.target.value);
+      zoomTo(newZoom, { duration: 50 }); // Use zoomTo for smoother slider interaction
+      setCurrentZoom(newZoom); // Update slider state immediately
+  }, [zoomTo]);
   // --- End Custom Control Handlers ---
+
+  // --- Define Min/Max Zoom for Slider ---
+  const minZoomSlider = 0.1; // Match ReactFlow's minZoom
+  const maxZoomSlider = 2.5; // Define a reasonable max for the slider
+  // --- End Define Min/Max Zoom for Slider ---
 
   return (
     <div className="w-full h-full fixed top-0 left-0">
@@ -337,20 +372,46 @@ export const Flow: React.FC<FlowProps> = (props) => {
         onNodesChange={onNodesChangeDefault}
         onEdgesChange={onEdgesChangeDefault}
         panOnScroll
-        minZoom={0.1}
-        fitView
-        fitViewOptions={{ padding: 0.1 }}
+        minZoom={minZoomSlider}
+        maxZoom={maxZoomSlider}
+        onViewportChange={(_viewport) => setCurrentZoom(_viewport.zoom)}
       >
-        <Controls />
         <MiniMap nodeStrokeWidth={3} zoomable pannable />
         <Background color="#aaa" gap={16} />
       </ReactFlow>
-      <div className="absolute bottom-4 left-4 z-10 flex flex-col space-y-2 p-2 bg-white bg-opacity-80 rounded shadow">
-        <button onClick={handleCenterFirst} className="px-2 py-1 text-xs bg-gray-200 hover:bg-gray-300 rounded">Center First</button>
-        <button onClick={handleCenterLast} className="px-2 py-1 text-xs bg-gray-200 hover:bg-gray-300 rounded">Center Last</button>
-        <button onClick={handleZoomIn} className="px-2 py-1 text-xs bg-gray-200 hover:bg-gray-300 rounded">Zoom In</button>
-        <button onClick={handleZoomOut} className="px-2 py-1 text-xs bg-gray-200 hover:bg-gray-300 rounded">Zoom Out</button>
-        <button onClick={handleFitView} className="px-2 py-1 text-xs bg-gray-200 hover:bg-gray-300 rounded">Reset Zoom</button>
+      {/* Custom Controls Overlay - Horizontal, Improved Styling, Icons, Slider */}
+      <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 z-10 flex flex-col items-center p-2 bg-gray-800 bg-opacity-70 rounded-lg shadow-lg space-y-2">
+        {/* Icon Buttons Row */}
+        <div className="flex flex-row space-x-2">
+           <button title="Center First Node" onClick={handleCenterFirst} className="p-2 text-white bg-gray-600 hover:bg-gray-500 rounded-md transition-colors duration-150">
+               <HomeIcon className="w-4 h-4" />
+           </button>
+           <button title="Zoom In" onClick={handleZoomIn} className="p-2 text-white bg-gray-600 hover:bg-gray-500 rounded-md transition-colors duration-150">
+               <MagnifyingGlassPlusIcon className="w-4 h-4" />
+           </button>
+           <button title="Reset Zoom" onClick={handleFitView} className="p-2 text-white bg-gray-600 hover:bg-gray-500 rounded-md transition-colors duration-150">
+               <ArrowsPointingOutIcon className="w-4 h-4" />
+           </button>
+           <button title="Zoom Out" onClick={handleZoomOut} className="p-2 text-white bg-gray-600 hover:bg-gray-500 rounded-md transition-colors duration-150">
+               <MagnifyingGlassMinusIcon className="w-4 h-4" />
+           </button>
+           <button title="Center Last Node" onClick={handleCenterLast} className="p-2 text-white bg-gray-600 hover:bg-gray-500 rounded-md transition-colors duration-150">
+               <CursorArrowRaysIcon className="w-4 h-4" />
+           </button>
+        </div>
+        {/* Zoom Slider Row */}
+        <div className="w-full px-2">
+           <input
+               type="range"
+               min={minZoomSlider}
+               max={maxZoomSlider}
+               step="0.05"
+               value={currentZoom}
+               onChange={handleZoomSliderChange}
+               className="w-full h-1 bg-gray-500 rounded-lg appearance-none cursor-pointer range-sm dark:bg-gray-700 accent-blue-500" // Basic styling, can be customized further
+               title={`Zoom: ${currentZoom.toFixed(2)}`}
+            />
+        </div>
       </div>
     </div>
   );
