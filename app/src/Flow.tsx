@@ -1,12 +1,16 @@
-import React, { useEffect } from "react";
+import React, { useCallback, useEffect } from "react";
 
 import ReactFlow, {
+  Controls,
+  MiniMap,
+  Background,
   Edge,
   Node,
   Position,
   ReactFlowProvider,
   useEdgesState,
   useNodesState,
+  useReactFlow,
 } from "reactflow";
 import dagre from "dagre";
 
@@ -59,9 +63,10 @@ const layoutElements = (
 
     // We are shifting the dagre node position (anchor=center center) to the top left
     // so it matches the React Flow node anchor point (top left).
+    // Use the actual node dimensions from dagre for the offset calculation
     node.position = {
-      x: nodeWithPosition.x - nodeWidth / 2 + 60,
-      y: nodeWithPosition.y - nodeHeight / 2 + 60,
+      x: nodeWithPosition.x - nodeWithPosition.width / 2 + 60,
+      y: nodeWithPosition.y - nodeWithPosition.height / 2 + 60,
     };
 
     return node;
@@ -93,7 +98,7 @@ export const openai_browser = async (
         {
           role: "system",
           content:
-            "You are a helpful assistant who always responds in English. Respond without any preamble, explanation, confirmation or commentary, just the final answer. Respond in markdown format if requested and make use of ## Headers, *italics*, **bold**, and lists as well as emoticons to make the answer more engaging.",
+            "You are a helpful assistant who always responds in English. Respond without any preamble, explanation, confirmation or commentary, just the final answer. Respond in markdown format if requested and make use of ## Headers, *italics*, **bold**, and lists as well as emoticons to make the answer more engaging. If requested to respond in JSON, only respond in JSON format, do not enclose it in ```json tags.",
         },
         { role: "user", content: prompt },
       ],
@@ -110,11 +115,19 @@ export const openai_browser = async (
       body: JSON.stringify(params),
       headers,
     });
+    if (!response.body) {
+      reject("Response body is null");
+      return;
+    }
     const reader = response.body
       .pipeThrough(new TextDecoderStream())
       .getReader();
     StreamLoop: while (true) {
       const { value } = await reader.read();
+      if (value === undefined) {
+        console.warn("Reader returned undefined value.");
+        continue;
+      }
       try {
         const maybeError = JSON.parse(value);
         if ("error" in maybeError) {
@@ -241,6 +254,7 @@ export const Flow: React.FC<FlowProps> = (props) => {
   const [edges, setEdges, onEdgesChangeDefault] = useEdgesState<Edge[]>(
     props.flowEdges
   );
+  const { fitView, zoomIn, zoomOut, setCenter, getNodes } = useReactFlow();
 
   // when props.flowNodes changes, then I need to call setNodes
   useEffect(() => {
@@ -259,24 +273,85 @@ export const Flow: React.FC<FlowProps> = (props) => {
   // console.log("nodes", nodes)
 
   const laid = React.useMemo(
-    () => layoutElements(nodes, edges, props.nodeDims),
+    () => {
+      // No filtering: Pass all nodes to layoutElements.
+      // It will use defaults if dims aren't ready.
+      // The useMemo dependency on props.nodeDims will trigger re-layout when dimensions update.
+      return layoutElements(nodes, edges, props.nodeDims);
+    },
     [nodes, edges, props.nodeDims]
   );
+
+  // --- Custom Control Handlers ---
+  const handleZoomIn = useCallback(() => {
+    zoomIn({ duration: 300 });
+  }, [zoomIn]);
+
+  const handleZoomOut = useCallback(() => {
+    zoomOut({ duration: 300 });
+  }, [zoomOut]);
+
+  const handleFitView = useCallback(() => {
+    fitView({ duration: 300, padding: 0.1 });
+  }, [fitView]);
+
+  const handleCenterNode = useCallback((nodeId: string | null) => {
+    if (!nodeId) return;
+    const allNodes = getNodes();
+    const node = allNodes.find((n) => n.id === nodeId);
+    if (node) {
+        const x = node.position.x + (node.width ?? 0) / 2;
+        const y = node.position.y + (node.height ?? 0) / 2;
+        setCenter(x, y, { zoom: 1, duration: 500 });
+    } else {
+        console.warn(`Node with ID ${nodeId} not found for centering.`);
+    }
+  }, [getNodes, setCenter]);
+
+
+  const handleCenterFirst = useCallback(() => {
+    // Assuming the first question node ID follows the pattern 'q-...' and starts from 'q-0' or similar lowest number.
+    // A more robust way might involve sorting nodes or checking for a specific 'isInitial' flag if available.
+    const allNodes = getNodes();
+    const firstQNode = allNodes.find(n => n.id.startsWith('q-') && !n.data?.parent); // Simple check for a root question node
+    handleCenterNode(firstQNode?.id ?? null);
+  }, [getNodes, handleCenterNode]);
+
+  const handleCenterLast = useCallback(() => {
+    const allNodes = getNodes();
+    if (allNodes.length === 0) return;
+    // Find the node with the highest numeric part in its ID or simply the last one added
+    // This is heuristic; a better approach depends on how node IDs are guaranteed to be ordered or structured.
+    const lastNode = allNodes[allNodes.length - 1]; // Or sort by creation time/ID logic if available
+    handleCenterNode(lastNode.id);
+  }, [getNodes, handleCenterNode]);
+  // --- End Custom Control Handlers ---
 
   return (
     <div className="w-full h-full fixed top-0 left-0">
       <ReactFlow
-        // fitView
-        panOnScroll
-        minZoom={0.1}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
         nodes={laid.nodes}
         edges={laid.edges}
         onNodesChange={onNodesChangeDefault}
         onEdgesChange={onEdgesChangeDefault}
-        {...props}
-      ></ReactFlow>
+        panOnScroll
+        minZoom={0.1}
+        fitView
+        fitViewOptions={{ padding: 0.1 }}
+      >
+        <Controls />
+        <MiniMap nodeStrokeWidth={3} zoomable pannable />
+        <Background color="#aaa" gap={16} />
+      </ReactFlow>
+      <div className="absolute bottom-4 left-4 z-10 flex flex-col space-y-2 p-2 bg-white bg-opacity-80 rounded shadow">
+        <button onClick={handleCenterFirst} className="px-2 py-1 text-xs bg-gray-200 hover:bg-gray-300 rounded">Center First</button>
+        <button onClick={handleCenterLast} className="px-2 py-1 text-xs bg-gray-200 hover:bg-gray-300 rounded">Center Last</button>
+        <button onClick={handleZoomIn} className="px-2 py-1 text-xs bg-gray-200 hover:bg-gray-300 rounded">Zoom In</button>
+        <button onClick={handleZoomOut} className="px-2 py-1 text-xs bg-gray-200 hover:bg-gray-300 rounded">Zoom Out</button>
+        <button onClick={handleFitView} className="px-2 py-1 text-xs bg-gray-200 hover:bg-gray-300 rounded">Reset Zoom</button>
+      </div>
     </div>
   );
 };

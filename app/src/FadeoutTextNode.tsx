@@ -8,6 +8,8 @@ import classNames from "classnames";
 import { NodeDims } from "./GraphPage";
 import { useFocused } from "./FocusedContext";
 
+console.log("FadeoutTextNode");
+
 const getScaleFactor = (): number => {
   const viewportElement = document.querySelector(
     ".react-flow__viewport"
@@ -49,15 +51,67 @@ type FadeoutTextNodeProps = {
   };
 };
 export const FadeoutTextNode: React.FC<FadeoutTextNodeProps> = (props) => {
+  const isLongAnswer = !props.data.question && props.data.text.length > 800;
+  const targetMaxWidth = isLongAnswer ? 500 : 250;
+
   const [ref, bounds] = useMeasure();
+  const [maxNodeHeightPx, setMaxNodeHeightPx] = useState(window.innerHeight * 0.99);
+
+  useEffect(() => {
+    const handleResize = () => {
+      setMaxNodeHeightPx(window.innerHeight * 0.99);
+    };
+    window.addEventListener('resize', handleResize);
+    // Initial calculation
+    handleResize();
+    // Cleanup listener on unmount
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
   const [expanded, setExpanded] = useState(
     // Auto-expand the first question and answer nodes
     props.data.nodeID === "a-0" || props.data.nodeID === "q-0" ? true : false
   );
-  const [actualHeight, setActualHeight] = useState(bounds.height);
+
   useEffect(() => {
-    setActualHeight(bounds.height / getScaleFactor());
-  }, [bounds.height]);
+    // Update dimensions in parent state whenever measured height changes and the node is expanded
+    if (expanded && bounds.width > 0 && bounds.height > 0) {
+      const scaleFactor = getScaleFactor();
+      const currentActualHeight = bounds.height / scaleFactor;
+      const currentWidth = bounds.width / scaleFactor;
+      const verticalPaddingAndBorder = 16 + 6; // 8px padding top/bottom + 3px border top/bottom
+      const buttonHeight = props.data.question && !props.data.hasAnswer ? 28 : 0; // Approx button height
+      const baseCalculatedHeight = currentActualHeight + verticalPaddingAndBorder + buttonHeight;
+
+      // Cap the height at the calculated max viewport height
+      const reportedHeight = Math.min(baseCalculatedHeight, maxNodeHeightPx);
+
+      props.data.setNodeDims((prevState) => ({
+        ...prevState,
+        [props.data.nodeID]: { width: Math.max(currentWidth, targetMaxWidth), height: reportedHeight }, // Use measured or target width, capped height
+      }));
+    }
+    // Depend on bounds.width and bounds.height, expanded state, and scale factor
+  }, [bounds.width, bounds.height, expanded, props.data.setNodeDims, props.data.nodeID, props.data.question, props.data.hasAnswer, targetMaxWidth, maxNodeHeightPx, getScaleFactor]);
+
+  // Calculate the actual height to apply to the style, considering expansion and max height
+  const scaleFactor = getScaleFactor();
+  const currentScaledContentHeight = bounds.height / scaleFactor;
+  const verticalPaddingAndBorder = 16 + 6; // 8px padding top/bottom + 3px border top/bottom
+  const buttonHeight = props.data.question && !props.data.hasAnswer ? 28 : 0;
+  const fullCalculatedHeight = currentScaledContentHeight + verticalPaddingAndBorder + buttonHeight;
+  const cappedHeight = Math.min(fullCalculatedHeight, maxNodeHeightPx);
+
+  const appliedHeight = props.data.question && !props.data.hasAnswer
+    ? expanded
+      ? cappedHeight // Use capped height when expanded
+      : Math.min(140 + verticalPaddingAndBorder + buttonHeight, fullCalculatedHeight) // Collapsed question: min of 140 or actual needed height
+    : expanded
+      ? cappedHeight // Use capped height when expanded
+      : props.data.question
+        ? Math.min(140 + verticalPaddingAndBorder, fullCalculatedHeight) // Collapsed question (already answered): min of 140 or actual needed height
+        : 'auto'; // Answer node collapsed (should not happen often with auto-expand)
+
   const { focusedId, setFocusedId, isInFocusedBranch } = useFocused();
 
   return (
@@ -66,17 +120,15 @@ export const FadeoutTextNode: React.FC<FadeoutTextNodeProps> = (props) => {
         if (props.data.question) {
           setFocusedId(props.data.nodeID.slice(2));
         }
-        setExpanded(true);
-        // Now I have to call setNodeDims with the nodeID and set the width and height
-        props.data.setNodeDims((prevState) => ({
-          ...prevState,
-          [props.data.nodeID]: { width: 250, height: actualHeight + (props.data.question && !props.data.hasAnswer ? 36 : 18) },
-        }));
+        // Only trigger expansion on click, dimension update is handled by useEffect
+        if (!expanded) {
+           setExpanded(true);
+        }
       }}
       onMouseDown={(e) => {
         e.stopPropagation();
       }}
-      className={classNames("fadeout-text border", {
+      className={classNames("fadeout-text border-[3px] bg-white text-black", {
         "cursor-pointer": !expanded,
         "cursor-default": expanded,
         "border-sky-400": props.data.question,
@@ -87,34 +139,36 @@ export const FadeoutTextNode: React.FC<FadeoutTextNodeProps> = (props) => {
           props.data.question && focusedId === props.data.nodeID.slice(2),
       })}
       style={{
+        maxHeight: maxNodeHeightPx, // Apply max height
         position: "relative",
         borderRadius: 4,
         padding: "8px 12px",
-        maxWidth: 250,
+        maxWidth: targetMaxWidth,
         overflow: "hidden",
-        height: props.data.question && !props.data.hasAnswer
-          ? expanded
-            ? actualHeight + 16 + 2
-            : Math.min(140, actualHeight) + 16 + 2 + 28
-          : expanded
-            ? actualHeight + 16 + 2
-            : props.data.question
-              ? Math.min(140 + 16 + 2, actualHeight + 16 + 2)
-              : "auto",
+        height: appliedHeight,
         transition:
-          "transform 0.5s, height 0.5s, width 0.5s, opacity 0.15s, border 0.15s",
+          "transform 0.5s, height 0.5s, width 0.5s, max-width 0.5s, opacity 0.15s, border 0.15s",
         paddingBottom: props.data.question && !props.data.hasAnswer ? "36px" : "8px",
       }}
     >
       <Handle type={"target"} position={Position.Left} />
       <Handle type={"source"} position={Position.Right} />
       <div
-        className={classNames("fadeout-text-inner prose prose-sm max-w-none", {
-          "h-[140px]": props.data.question && !expanded,
-        })}
-        style={expanded || !props.data.question ? { WebkitMaskImage: "none" } : {}}
+        className={classNames(
+          "fadeout-text-inner prose max-w-none prose-*:first:mt-0 text-black prose-li:marker:text-black prose-li:my-1 leading-tight",
+          "[&_ul]:mt-[0.25em] [&_ol]:mt-[0.25em]",
+          "[&_p]:mt-[1em] [&_p]:mb-0",
+          {
+            "h-[140px]": props.data.question && !expanded,
+          }
+        )}
+        style={{
+          height: '100%', // Allow inner div to fill parent's height
+          overflowY: 'auto', // Add vertical scroll when needed
+          ...(expanded || !props.data.question ? { WebkitMaskImage: "none" } : {})
+        }}
       >
-        <div ref={ref}>
+        <div ref={ref} className="[&>*:first-child]:mt-0">
           <ReactMarkdown remarkPlugins={[remarkGfm]}>
             {props.data.text}
           </ReactMarkdown>

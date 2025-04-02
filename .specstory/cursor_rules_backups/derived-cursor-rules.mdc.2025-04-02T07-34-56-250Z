@@ -1,7 +1,3 @@
----
-description: Cursor rules derived by SpecStory from the project AI interaction history
-globs: *
----
 
 ## PROJECT OVERVIEW
 
@@ -40,7 +36,7 @@ The project uses a structured folder organization to enhance maintainability and
 
 ## TECH STACK
 
-- Frontend: React, React Router, TypeScript, Cytoscape.js, react-textarea-autosize, react-markdown, framer-motion, localforage, classnames, remark-gfm, @tailwindcss/typography, react-flow
+- Frontend: React, React Router, TypeScript, Cytoscape.js, react-textarea-autosize, react-markdown, framer-motion, localforage, classnames, remark-gfm, @tailwindcss/typography
 - Backend: Node.js, Express.js, Firebase, OpenAI API, ws
 - Testing: (To be defined)
 
@@ -69,7 +65,7 @@ The project uses a structured folder organization to enhance maintainability and
 - **Awaiting Dimension Updates:** To reliably ensure the layout uses updated dimensions, a small delay (`setTimeout`) was added within `generateAnswerForNode` in `app/src/GraphPage.tsx`. This delay gives React time to process the dimension updates from `FadeoutTextNode.tsx` before the layout calculation runs.  This approach was ultimately replaced by removing the filtering logic in `Flow.tsx` and allowing the layout to run on all nodes, relying on the layout function to handle missing dimensions gracefully.  This ensures that initial and subsequent nodes are rendered as intended.
 - **Layout Function and Dimension Handling:** The layout function (`layoutElements` in `Flow.tsx`) now handles cases where node dimensions are not immediately available in `props.nodeDims`.  If dimensions are missing, the layout uses default dimensions (250x170) for those nodes. Once dimensions become available, the layout is recalculated.
 - **Awaiting Dimension Updates (Final Solution):**  The issue with subsequent answer nodes not rendering correctly was ultimately resolved by using a refined filtering strategy in `Flow.tsx`. The layout function now only considers nodes for which dimensions are available in `props.nodeDims`, except for the initial question node (`q-0`) and the initial answer node (`a-0`), which are always included.  This ensures that nodes are only laid out once their dimensions are known, preventing incorrect positioning.  This solution avoids the need for artificial delays and ensures that the layout is performed correctly and efficiently.
-- **Canvas Controls:** The `Flow.tsx` component has been updated to include canvas controls such as centering on the first/last node, zoom in/out, and reset zoom functionality. This involved integrating the `Controls`, `MiniMap`, and `Background` components from `react-flow` and adding custom buttons for centering on the first and last nodes, zooming in/out, and resetting the zoom.  This enhancement is based on the user request documented in 2025-04-02_07-32-enhancing-node-graph-canvas-controls.md.
+- **Canvas Controls:**  The `Flow.tsx` component will be updated to include canvas controls such as centering on the first/last node, zoom in/out, and reset zoom functionality.  This will involve integrating components from a suitable library (e.g., react-flow) and adding custom controls as needed.  This enhancement is based on the user request documented in 2025-04-02_07-32-untitled.md.
 
 
 ## WORKFLOW & RELEASE RULES

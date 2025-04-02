@@ -214,6 +214,8 @@ async function* nodeGenerator(
     // The await above has finished, so the stream is complete and node.answer has the full text.
     console.log(`Complete answer for node ${nodeId}:`, node.answer);
     // You could also use: console.log(`Complete answer for node ${nodeId}:`, opts.qaTree[nodeId].answer);
+    // log the length of the answer
+    console.log(`Length of answer for node ${nodeId}:`, node.answer.length);
 
     // Trigger a final update just in case (though onChunk likely handled it)
     opts.onChangeQATree();
@@ -440,6 +442,12 @@ function GraphPage(props: {
           },
         });
         setResultTree(JSON.parse(JSON.stringify(commonOpts.qaTree)));
+
+        // --- Add slight delay ---
+        // Allow time for the FadeoutTextNode's useEffect to measure the new answer node dimensions
+        // and call setNodeDims before we add the child nodes, preventing a layout race condition.
+        await new Promise(resolve => setTimeout(resolve, 100)); // Increase delay to 100ms
+        console.log("Delayed for 100ms");
 
         const questionIds: string[] = [];
         await getQuestions(

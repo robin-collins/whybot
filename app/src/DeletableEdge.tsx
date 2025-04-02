@@ -26,9 +26,9 @@ type DeletableEdgeProps = {
   targetX: number;
   targetY: number;
   sourcePosition: any;
-  style: any;
+  style?: any;
   targetPosition: any;
-  data: any;
+  data?: any;
 };
 
 export function DeletableEdge({
@@ -69,9 +69,9 @@ export function DeletableEdge({
             <polyline
               id={`${id}-poly`}
               stroke="#b1b1b7"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              stroke-width="1"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth="1"
               fill="none"
               points="-5,-4 0,0 -5,4"
             ></polyline>
@@ -84,7 +84,9 @@ export function DeletableEdge({
           d={edgePath}
           markerEnd={`url(#${id}-marker)`}
           onClick={(event) => {
-            onEdgeClick(event, id, data.deleteBranch);
+            if (data?.deleteBranch) {
+              onEdgeClick(event, id, data.deleteBranch);
+            }
             console.log("clicked path");
           }}
         />
@@ -94,7 +96,9 @@ export function DeletableEdge({
           className="fat-path"
           d={edgePath}
           onClick={(event) => {
-            onEdgeClick(event, id, data.deleteBranch);
+            if (data?.deleteBranch) {
+              onEdgeClick(event, id, data.deleteBranch);
+            }
             console.log("clicked fat path");
           }}
         />

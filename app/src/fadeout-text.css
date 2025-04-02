@@ -18,3 +18,7 @@
 .react-flow__panel {
   display: none;
 }
+
+.text-black {
+  color: #000;
+}
