@@ -13,6 +13,7 @@ import type { ApiKey } from "./APIKeyModal";
 import { SERVER_HOST } from "./constants";
 import { MODELS } from "./models";
 import { FocusedContextProvider, isChild } from "./FocusedContext";
+import { ConfirmDeleteModal } from "./ConfirmDeleteModal";
 
 export interface QATreeNode {
   question: string;
@@ -40,7 +41,7 @@ type TreeNode = Node & {
 type ConvertTreeToFlowProps = (
   tree: QATree,
   setNodeDims: any,
-  deleteBranch: any,
+  requestDeleteBranch: (edgeId: string) => void,
   playing: boolean,
   generateAnswerForNode: (nodeId: string) => Promise<void>,
   answeringNodes: Set<string>
@@ -49,7 +50,7 @@ type ConvertTreeToFlowProps = (
 export const convertTreeToFlow: ConvertTreeToFlowProps = (
   tree,
   setNodeDims,
-  deleteBranch,
+  requestDeleteBranch,
   playing,
   generateAnswerForNode,
   answeringNodes
@@ -97,7 +98,7 @@ export const convertTreeToFlow: ConvertTreeToFlowProps = (
         source: n.parentNodeID,
         target: n.id,
         data: {
-          deleteBranch,
+          requestDeleteBranch,
         },
         animated: playing,
         markerEnd: { type: MarkerType.Arrow },
@@ -188,7 +189,9 @@ async function* nodeGenerator(
 
     const node = opts.qaTree[nodeId];
     if (node == null) {
-      throw new Error(`Node ${nodeId} not found`);
+      console.log(`Node ${nodeId} not found in generator, likely deleted.`);
+      yield;
+      continue;
     }
     node.startedProcessing = true;
 
@@ -204,32 +207,39 @@ async function* nodeGenerator(
       onChunk: (chunk) => {
         const node = opts.qaTree[nodeId];
         if (node == null) {
-          throw new Error(`Node ${nodeId} not found`);
+          console.log(`Node ${nodeId} disappeared during answer generation.`);
+          return;
         }
         node.answer += chunk;
         opts.onChangeQATree();
       },
     });
 
-    // The await above has finished, so the stream is complete and node.answer has the full text.
+    if (!opts.qaTree[nodeId]) {
+      console.log(`Node ${nodeId} was deleted after answer generation completed.`);
+      yield;
+      continue;
+    }
+
     console.log(`Complete answer for node ${nodeId}:`, node.answer);
-    // You could also use: console.log(`Complete answer for node ${nodeId}:`, opts.qaTree[nodeId].answer);
-    // log the length of the answer
     console.log(`Length of answer for node ${nodeId}:`, node.answer.length);
 
-    // Trigger a final update just in case (though onChunk likely handled it)
     opts.onChangeQATree();
-    yield; // Allow UI updates if needed before fetching questions
+    yield;
 
-    // Now, get the follow-up questions
     const ids: string[] = [];
     await getQuestions(
       opts.apiKey,
       opts.model,
       opts.persona,
-      node, // node now contains the complete answer
+      node,
       opts.qaTree,
       (partial) => {
+        if (!opts.qaTree[nodeId]) {
+          console.log(`Parent node ${nodeId} deleted before questions could be attached.`);
+          return;
+        }
+
         if (partial.length > ids.length) {
           for (let i = ids.length; i < partial.length; i++) {
             const newId = Math.random().toString(36).substring(2, 9);
@@ -240,8 +250,6 @@ async function* nodeGenerator(
               answer: "",
             };
 
-            // Here is where we're setting the parent (backwards edge)
-            // which means we can set the children (forward edge)
             if (opts.qaTree[nodeId].children == null) {
               opts.qaTree[nodeId].children = [newId];
             } else {
@@ -250,7 +258,9 @@ async function* nodeGenerator(
           }
         }
         for (let i = 0; i < partial.length; i++) {
-          opts.qaTree[ids[i]].question = partial[i].question;
+          if(opts.qaTree[ids[i]]) {
+            opts.qaTree[ids[i]].question = partial[i].question;
+          }
         }
         opts.onChangeQATree();
       }
@@ -260,10 +270,10 @@ async function* nodeGenerator(
     yield;
 
     ids.forEach((id) => {
-      if (
-        !opts.qaTree[id].startedProcessing &&
-        (!opts.focusedId || isChild(opts.qaTree, opts.focusedId, id))
-      ) {
+      if (opts.qaTree[id] &&
+          !opts.qaTree[id].startedProcessing &&
+          (!opts.focusedId || isChild(opts.qaTree, opts.focusedId, id)))
+       {
         opts.questionQueue.push(id);
       }
     });
@@ -313,9 +323,14 @@ class NodeGenerator {
         await new Promise((resolve) => setTimeout(resolve, 100));
       }
       this.setFullyPaused(false);
-      const { done } = await this.generator.next();
-      if (done || this.destroyed) {
-        break;
+      try {
+        const { done } = await this.generator.next();
+        if (done || this.destroyed) {
+           break;
+        }
+      } catch (error) {
+          console.error("Error in node generator iteration:", error);
+          break;
       }
     }
   }
@@ -331,11 +346,11 @@ class NodeGenerator {
   destroy() {
     this.destroyed = true;
     this.opts.onChangeQATree = () => {};
+    this.opts.onNodeGenerated = () => {};
   }
 }
 
 class MultiNodeGenerator {
-  // Warning: opts gets mutated a lot, which is probably bad practice.
   opts: NodeGeneratorOpts;
   generators: NodeGenerator[];
   onFullyPausedChange: (fullyPaused: boolean) => void;
@@ -348,8 +363,9 @@ class MultiNodeGenerator {
     this.opts = opts;
     this.generators = [];
     for (let i = 0; i < n; i++) {
+      const generatorOpts = { ...opts };
       this.generators.push(
-        new NodeGenerator(opts, () => {
+        new NodeGenerator(generatorOpts, () => {
           this.onFullyPausedChange(
             this.generators.every((gen) => gen.fullyPaused)
           );
@@ -385,6 +401,9 @@ class MultiNodeGenerator {
 
   setFocusedId(id: string | null) {
     this.opts.focusedId = id;
+    for (const gen of this.generators) {
+        gen.opts.focusedId = id;
+    }
   }
 }
 
@@ -404,6 +423,9 @@ function GraphPage(props: {
   const initialGenerationPaused = useRef(false);
   const [answeringNodes, setAnsweringNodes] = useState<Set<string>>(new Set());
 
+  const [isConfirmModalOpen, setIsConfirmModalOpen] = useState(false);
+  const [edgeToDelete, setEdgeToDelete] = useState<string | null>(null);
+
   const generateAnswerForNode = useCallback(
     async (nodeId: string) => {
       console.log("Manual trigger for node:", nodeId);
@@ -412,6 +434,11 @@ function GraphPage(props: {
         const node = qaTreeRef.current[nodeId];
         if (!node || node.answer) {
           console.warn(`Node ${nodeId} not found or already has answer.`);
+          setAnsweringNodes(prev => {
+             const next = new Set(prev);
+             next.delete(nodeId);
+             return next;
+          });
           return;
         }
 
@@ -441,22 +468,33 @@ function GraphPage(props: {
             }
           },
         });
+
+        if (!qaTreeRef.current[nodeId]) {
+          console.log(`Node ${nodeId} was deleted after answer generation completed.`);
+          return;
+        }
         setResultTree(JSON.parse(JSON.stringify(commonOpts.qaTree)));
 
-        // --- Add slight delay ---
-        // Allow time for the FadeoutTextNode's useEffect to measure the new answer node dimensions
-        // and call setNodeDims before we add the child nodes, preventing a layout race condition.
-        await new Promise(resolve => setTimeout(resolve, 100)); // Increase delay to 100ms
+        await new Promise(resolve => setTimeout(resolve, 100));
         console.log("Delayed for 100ms");
+
+        if (!qaTreeRef.current[nodeId]) {
+          console.log(`Node ${nodeId} was deleted during the 100ms delay.`);
+          return;
+        }
 
         const questionIds: string[] = [];
         await getQuestions(
           commonOpts.apiKey,
           commonOpts.model,
           commonOpts.persona,
-          node,
+          qaTreeRef.current[nodeId],
           commonOpts.qaTree,
           (partial) => {
+              if (!qaTreeRef.current[nodeId]) {
+                  console.log(`Parent node ${nodeId} deleted while processing partial questions.`);
+                  return;
+              }
             if (partial.length > questionIds.length) {
               for (let i = questionIds.length; i < partial.length; i++) {
                 const newId = Math.random().toString(36).substring(2, 9);
@@ -487,7 +525,7 @@ function GraphPage(props: {
         console.error(`Error generating answer/questions for node ${nodeId}:`, error);
         if(qaTreeRef.current[nodeId]) {
           qaTreeRef.current[nodeId].startedProcessing = false;
-          qaTreeRef.current[nodeId].answer += "\\n\\nError occurred.";
+          qaTreeRef.current[nodeId].answer += "\n\nError occurred.";
           setResultTree(JSON.parse(JSON.stringify(qaTreeRef.current)));
         }
       } finally {
@@ -525,7 +563,7 @@ function GraphPage(props: {
           setResultTree(JSON.parse(JSON.stringify(qaTreeRef.current)));
         },
         onNodeGenerated: (completedNodeId: string) => {
-          if (completedNodeId === '0' && !initialGenerationPaused.current) {
+          if (qaTreeRef.current[completedNodeId] && completedNodeId === '0' && !initialGenerationPaused.current) {
              console.log("Initial questions generated, pausing generator.");
              generatorRef.current?.pause();
              setPlaying(false);
@@ -541,31 +579,90 @@ function GraphPage(props: {
     return () => {
       generatorRef.current?.destroy();
     };
-  }, [props.model, props.persona, props.seedQuery]);
+  }, [props.apiKey, props.model, props.persona, props.seedQuery]);
 
   const [nodeDims, setNodeDims] = useState<NodeDims>({});
 
-  const deleteBranch = useCallback(
-    (id: string) => {
-      const qaNode = resultTree[id];
-      console.log("deleting qaNode, question", qaNode.question);
+  const requestDeleteBranch = useCallback((edgeId: string) => {
+    console.log("Requesting confirmation to delete edge:", edgeId);
+    setEdgeToDelete(edgeId);
+    setIsConfirmModalOpen(true);
+  }, []);
 
-      if (id in qaTreeRef.current) {
-        delete qaTreeRef.current[id];
-        setResultTree(JSON.parse(JSON.stringify(qaTreeRef.current)));
-      }
+  const handleConfirmDelete = useCallback(() => {
+    if (!edgeToDelete) return;
 
-      const children = "children" in qaNode ? qaNode.children ?? [] : [];
-      for (var child of children) {
-        deleteBranch(child);
+    console.log("Confirmed deletion for edge:", edgeToDelete);
+    const edgeParts = edgeToDelete.split('-');
+    let targetNodeId: string | null = null;
+
+    if (edgeParts.length === 4) {
+        targetNodeId = edgeParts[3];
+    } else if (edgeParts.length === 3) {
+        targetNodeId = edgeParts[2];
+    } else {
+        console.error("Could not parse edge ID format:", edgeToDelete);
+        setEdgeToDelete(null);
+        return;
+    }
+
+    if (!targetNodeId || !(targetNodeId in qaTreeRef.current)) {
+        console.error(`Target node ${targetNodeId} not found in tree for deletion.`);
+        setEdgeToDelete(null);
+        return;
+    }
+
+    const nodesToDelete = new Set<string>();
+    const deletionStack = [targetNodeId];
+
+    while (deletionStack.length > 0) {
+      const currentId = deletionStack.pop();
+      if (!currentId || !qaTreeRef.current[currentId] || nodesToDelete.has(currentId)) {
+        continue;
       }
-    },
-    [resultTree, setResultTree]
-  );
+      nodesToDelete.add(currentId);
+      const children = qaTreeRef.current[currentId].children;
+      if (children) {
+        children.forEach(childId => {
+          if (qaTreeRef.current[childId]) {
+             deletionStack.push(childId);
+          }
+        });
+      }
+    }
+
+    console.log("Nodes identified for deletion:", Array.from(nodesToDelete));
+
+    const newTree = { ...qaTreeRef.current };
+    let changesMade = false;
+    nodesToDelete.forEach(idToDelete => {
+      if (idToDelete in newTree) {
+        delete newTree[idToDelete];
+
+        const parentId = qaTreeRef.current[idToDelete]?.parent;
+        if (parentId && newTree[parentId]?.children) {
+            newTree[parentId].children = newTree[parentId].children?.filter(child => child !== idToDelete);
+        }
+        changesMade = true;
+      } else {
+          console.warn(`Node ${idToDelete} was already removed or never existed.`);
+      }
+    });
+
+    if (changesMade) {
+      qaTreeRef.current = newTree;
+      setResultTree(JSON.parse(JSON.stringify(qaTreeRef.current)));
+       console.log("Deletion complete. Updated tree:", qaTreeRef.current);
+    } else {
+        console.log("No changes made during deletion process.");
+    }
+
+    setEdgeToDelete(null);
+  }, [edgeToDelete]);
 
   const { nodes, edges } = useMemo(() => {
-    return convertTreeToFlow(resultTree, setNodeDims, deleteBranch, playing, generateAnswerForNode, answeringNodes);
-  }, [resultTree, playing, answeringNodes, generateAnswerForNode]);
+    return convertTreeToFlow(resultTree, setNodeDims, requestDeleteBranch, playing, generateAnswerForNode, answeringNodes);
+  }, [resultTree, playing, requestDeleteBranch, answeringNodes, generateAnswerForNode]);
 
   function resume() {
     if (!playing) {
@@ -590,14 +687,13 @@ function GraphPage(props: {
           flowNodes={nodes}
           flowEdges={edges}
           nodeDims={nodeDims}
-          deleteBranch={deleteBranch}
+          deleteBranch={requestDeleteBranch}
         />
-        <div className="fixed right-4 bottom-4 flex items-center space-x-2">
+        <div className="fixed right-4 bottom-4 flex items-center space-x-2 z-20">
           {SERVER_HOST.includes("localhost") && (
             <div
               className="bg-black/40 p-2 flex items-center justify-center rounded cursor-pointer hover:text-green-400 backdrop-blur"
               onClick={() => {
-                // we want to save the current resultTree as JSON
                 const filename = props.seedQuery
                   .toLowerCase()
                   .replace(/\s+/g, "-");
@@ -626,12 +722,14 @@ function GraphPage(props: {
                 }
               }}
             >
-              {playing ? (
-                <PauseIcon className="w-5 h-5" />
+              {initialGenerationPaused.current ? (
+                 <PlayIcon className="w-5 h-5" />
+              ) : playing ? (
+                 <PauseIcon className="w-5 h-5" />
               ) : fullyPaused ? (
-                <PlayIcon className="w-5 h-5" />
+                 <PlayIcon className="w-5 h-5" />
               ) : (
-                <PlayIcon className="w-5 h-5 animate-pulse" />
+                 <PlayIcon className="w-5 h-5 animate-pulse" />
               )}
             </div>
           </div>
@@ -640,10 +738,19 @@ function GraphPage(props: {
           onClick={() => {
             props.onExit();
           }}
-          className="fixed top-4 left-4 bg-black/40 rounded p-2 cursor-pointer hover:bg-black/60 backdrop-blur touch-none"
+          className="fixed top-4 left-4 bg-black/40 rounded p-2 cursor-pointer hover:bg-black/60 backdrop-blur touch-none z-20"
         >
           <ArrowLeftIcon className="w-5 h-5" />
         </div>
+
+        <ConfirmDeleteModal
+          isOpen={isConfirmModalOpen}
+          onClose={() => {
+            setIsConfirmModalOpen(false);
+            setEdgeToDelete(null);
+          }}
+          onConfirm={handleConfirmDelete}
+        />
       </div>
     </FocusedContextProvider>
   );
