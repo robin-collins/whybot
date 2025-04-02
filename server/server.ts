@@ -13,7 +13,24 @@ import { credential } from "firebase-admin";
 
 config();
 
-console.log(process.env.FIREBASE_PRIVATE_KEY, process.env.OPENAI_API_KEY);
+// a function that takes a string, and integer for the number of start characters, and an integer for the number of end characters, and returns a string that only contains the start and end characters with "..." in between
+const truncateString = (str: string, start: number, end: number) => {
+  if (str.length <= start + end) return str;
+  return str.slice(0, start) + "..." + str.slice(-end);
+};
+
+// log to console if the FIREBASE_PRIVATE_KEY and OPENAI_API_KEY and MAX_TOKENS environment variables are set using ✅ or ❌.
+const logEnvVar = (envVar: string, name: string) => {
+  if (envVar) {
+    console.log(`${name} is set ✅`);
+  } else {
+    console.log(`${name} is not set ❌`);
+  }
+};
+
+logEnvVar(process.env.FIREBASE_PRIVATE_KEY, "FIREBASE_PRIVATE_KEY");
+logEnvVar(process.env.OPENAI_API_KEY, "OPENAI_API_KEY");
+logEnvVar(process.env.MAX_TOKENS, "MAX_TOKENS");
 
 initializeApp({
   credential: credential.cert({
@@ -25,6 +42,8 @@ initializeApp({
     clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
   }),
 });
+
+const MAX_TOKENS = parseInt(process.env.MAX_TOKENS ?? "4096");
 
 const db = getFirestore();
 
@@ -104,11 +123,11 @@ wss.on("connection", (ws) => {
             {
               role: "system",
               content:
-                "You are a helpful assistant. Always respond in English.",
+                "You are a helpful assistant who always responds in English. Respond without any preamble, explanation, confirmation or commentary, just the final answer. Respond in markdown format if requested and make use of ## Headers, *italics*, **bold**, and lists as well as emoticons to make the answer more engaging.",
             },
             { role: "user", content: data.prompt },
           ],
-          max_tokens: 200,
+          max_tokens: MAX_TOKENS,
           temperature: data.temperature,
           n: 1,
         },

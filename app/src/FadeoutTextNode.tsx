@@ -45,6 +45,7 @@ type FadeoutTextNodeProps = {
     question: boolean;
     hasAnswer?: boolean;
     onGenerateAnswer?: (nodeId: string) => void;
+    isAnswering?: boolean;
   };
 };
 export const FadeoutTextNode: React.FC<FadeoutTextNodeProps> = (props) => {
@@ -91,14 +92,18 @@ export const FadeoutTextNode: React.FC<FadeoutTextNodeProps> = (props) => {
         padding: "8px 12px",
         maxWidth: 250,
         overflow: "hidden",
-        height: props.data.question
+        height: props.data.question && !props.data.hasAnswer
           ? expanded
             ? actualHeight + 16 + 2
-            : Math.min(140 + 16 + 2, actualHeight + 16 + 2)
-          : "auto",
+            : Math.min(140, actualHeight) + 16 + 2 + 28
+          : expanded
+            ? actualHeight + 16 + 2
+            : props.data.question
+              ? Math.min(140 + 16 + 2, actualHeight + 16 + 2)
+              : "auto",
         transition:
           "transform 0.5s, height 0.5s, width 0.5s, opacity 0.15s, border 0.15s",
-        paddingBottom: props.data.question && !props.data.hasAnswer ? "28px" : "8px",
+        paddingBottom: props.data.question && !props.data.hasAnswer ? "36px" : "8px",
       }}
     >
       <Handle type={"target"} position={Position.Left} />
@@ -117,16 +122,23 @@ export const FadeoutTextNode: React.FC<FadeoutTextNodeProps> = (props) => {
       </div>
       {props.data.question && !props.data.hasAnswer && props.data.onGenerateAnswer && (
         <button
+          disabled={props.data.isAnswering}
           onClick={(e) => {
             e.stopPropagation();
             if (props.data.onGenerateAnswer) {
               props.data.onGenerateAnswer(props.data.nodeID.slice(2));
             }
           }}
-          className="absolute bottom-1 right-1 bg-sky-600 text-white px-2 py-0.5 rounded text-xs hover:bg-sky-700 z-10 cursor-pointer"
+          className={classNames(
+            "absolute bottom-1 right-1 text-white px-2 py-0.5 rounded text-xs z-10",
+            {
+              "bg-green-600 hover:bg-green-700 cursor-wait": props.data.isAnswering,
+              "bg-sky-600 hover:bg-sky-700 cursor-pointer": !props.data.isAnswering,
+            }
+          )}
           style={{ fontSize: '0.7rem', lineHeight: '1rem', padding: '2px 6px'}}
         >
-          Answer
+          {props.data.isAnswering ? "Answering..." : "Answer"}
         </button>
       )}
     </div>

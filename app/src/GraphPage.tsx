@@ -42,7 +42,8 @@ type ConvertTreeToFlowProps = (
   setNodeDims: any,
   deleteBranch: any,
   playing: boolean,
-  generateAnswerForNode: (nodeId: string) => Promise<void>
+  generateAnswerForNode: (nodeId: string) => Promise<void>,
+  answeringNodes: Set<string>
 ) => any;
 
 export const convertTreeToFlow: ConvertTreeToFlowProps = (
@@ -50,7 +51,8 @@ export const convertTreeToFlow: ConvertTreeToFlowProps = (
   setNodeDims,
   deleteBranch,
   playing,
-  generateAnswerForNode
+  generateAnswerForNode,
+  answeringNodes
 ) => {
   const nodes: TreeNode[] = [];
   Object.keys(tree).forEach((key) => {
@@ -65,6 +67,7 @@ export const convertTreeToFlow: ConvertTreeToFlowProps = (
         question: isQuestion,
         hasAnswer: !!tree[key].answer,
         onGenerateAnswer: generateAnswerForNode,
+        isAnswering: answeringNodes.has(key),
       },
       position: { x: 0, y: 0 },
       parentNodeID: tree[key].parent != null ? `a-${tree[key].parent}` : "",
@@ -208,15 +211,21 @@ async function* nodeGenerator(
       },
     });
 
-    opts.onChangeQATree();
-    yield;
+    // The await above has finished, so the stream is complete and node.answer has the full text.
+    console.log(`Complete answer for node ${nodeId}:`, node.answer);
+    // You could also use: console.log(`Complete answer for node ${nodeId}:`, opts.qaTree[nodeId].answer);
 
+    // Trigger a final update just in case (though onChunk likely handled it)
+    opts.onChangeQATree();
+    yield; // Allow UI updates if needed before fetching questions
+
+    // Now, get the follow-up questions
     const ids: string[] = [];
     await getQuestions(
       opts.apiKey,
       opts.model,
       opts.persona,
-      node,
+      node, // node now contains the complete answer
       opts.qaTree,
       (partial) => {
         if (partial.length > ids.length) {
@@ -391,27 +400,29 @@ function GraphPage(props: {
   const [playing, setPlaying] = useState(true);
   const [fullyPaused, setFullyPaused] = useState(false);
   const initialGenerationPaused = useRef(false);
+  const [answeringNodes, setAnsweringNodes] = useState<Set<string>>(new Set());
 
   const generateAnswerForNode = useCallback(
     async (nodeId: string) => {
       console.log("Manual trigger for node:", nodeId);
-      const node = qaTreeRef.current[nodeId];
-      if (!node || node.answer) {
-        console.warn(`Node ${nodeId} not found or already has answer.`);
-        return;
-      }
-
-      node.startedProcessing = true;
-      setResultTree(JSON.parse(JSON.stringify(qaTreeRef.current)));
-
-      const commonOpts = {
-        apiKey: props.apiKey,
-        model: props.model,
-        persona: props.persona,
-        qaTree: qaTreeRef.current,
-      };
-
+      setAnsweringNodes(prev => new Set(prev).add(nodeId));
       try {
+        const node = qaTreeRef.current[nodeId];
+        if (!node || node.answer) {
+          console.warn(`Node ${nodeId} not found or already has answer.`);
+          return;
+        }
+
+        node.startedProcessing = true;
+        setResultTree(JSON.parse(JSON.stringify(qaTreeRef.current)));
+
+        const commonOpts = {
+          apiKey: props.apiKey,
+          model: props.model,
+          persona: props.persona,
+          qaTree: qaTreeRef.current,
+        };
+
         const promptForAnswer = PERSONAS[commonOpts.persona].getPromptForAnswer(
           node,
           commonOpts.qaTree
@@ -471,6 +482,12 @@ function GraphPage(props: {
           qaTreeRef.current[nodeId].answer += "\\n\\nError occurred.";
           setResultTree(JSON.parse(JSON.stringify(qaTreeRef.current)));
         }
+      } finally {
+         setAnsweringNodes(prev => {
+           const next = new Set(prev);
+           next.delete(nodeId);
+           return next;
+         });
       }
     },
     [props.apiKey, props.model, props.persona]
@@ -539,8 +556,8 @@ function GraphPage(props: {
   );
 
   const { nodes, edges } = useMemo(() => {
-    return convertTreeToFlow(resultTree, setNodeDims, deleteBranch, playing, generateAnswerForNode);
-  }, [resultTree, playing]);
+    return convertTreeToFlow(resultTree, setNodeDims, deleteBranch, playing, generateAnswerForNode, answeringNodes);
+  }, [resultTree, playing, answeringNodes, generateAnswerForNode]);
 
   function resume() {
     if (!playing) {

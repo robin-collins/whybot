@@ -93,7 +93,7 @@ export const openai_browser = async (
         {
           role: "system",
           content:
-            "You are a helpful assistant who always responds in English.",
+            "You are a helpful assistant who always responds in English. Respond without any preamble, explanation, confirmation or commentary, just the final answer. Respond in markdown format if requested and make use of ## Headers, *italics*, **bold**, and lists as well as emoticons to make the answer more engaging.",
         },
         { role: "user", content: prompt },
       ],
@@ -213,7 +213,7 @@ export const openai = async (
   }
 ) => {
   if (opts.apiKey) {
-    console.log("yo using the browser api key");
+    console.log("you are using the browser api key");
     return openai_browser(prompt, {
       apiKey: opts.apiKey,
       model: opts.model,
