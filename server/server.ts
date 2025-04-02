@@ -1,6 +1,6 @@
 import express from "express";
 import { rateLimit, MemoryStore } from "express-rate-limit";
-import { Configuration, OpenAIApi } from "openai";
+import OpenAI from "openai";
 import WebSocket from "ws";
 import cors from "cors";
 import { config } from "dotenv";
@@ -11,6 +11,8 @@ import { initializeApp } from "firebase-admin/app";
 import { getFirestore } from "firebase-admin/firestore";
 import { credential } from "firebase-admin";
 
+import webpageRoutes from './routes/webpage';
+
 config();
 
 // a function that takes a string, and integer for the number of start characters, and an integer for the number of end characters, and returns a string that only contains the start and end characters with "..." in between
@@ -20,7 +22,7 @@ const truncateString = (str: string, start: number, end: number) => {
 };
 
 // log to console if the FIREBASE_PRIVATE_KEY and OPENAI_API_KEY and MAX_TOKENS environment variables are set using ✅ or ❌.
-const logEnvVar = (envVar: string, name: string) => {
+const logEnvVar = (envVar: string | undefined, name: string) => {
   if (envVar) {
     console.log(`${name} is set ✅`);
   } else {
@@ -84,10 +86,9 @@ const rateLimiters = {
   }),
 };
 
-const configuration = new Configuration({
+const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
-const openai = new OpenAIApi(configuration);
 
 const app = express();
 app.use(cors());
@@ -115,7 +116,7 @@ wss.on("connection", (ws) => {
       console.log("data", data);
 
       // Call the OpenAI API and wait for the response
-      const response = await openai.createChatCompletion(
+      const stream = await openai.chat.completions.create(
         {
           model: data.model,
           stream: true,
@@ -130,58 +131,25 @@ wss.on("connection", (ws) => {
           max_tokens: MAX_TOKENS,
           temperature: data.temperature,
           n: 1,
-        },
-        { responseType: "stream" }
+        }
       );
 
-      // Handle streaming data from the OpenAI API
-      response.data.on("data", (data) => {
-        // console.log("\nDATA", data.toString());
-        let lines = data?.toString()?.split("\n");
-        lines = lines.filter((line) => line.trim() !== "");
-        // console.log("\nLINES", lines);
-        for (const line of lines) {
-          const message = line.replace(/^data: /, "");
-          if (message === "[DONE]") {
-            break; // Stream finished
-          }
-          try {
-            const payload = JSON.parse(message);
-            const completion = payload.choices[0].delta.content;
-            if (completion != null) {
-              ws.send(completion);
-            }
-          } catch (error) {
-            console.error(
-              "Could not JSON parse stream message",
-              message,
-              error
-            );
-          }
+      // Process the stream using async iteration
+      for await (const part of stream) {
+        const completion = part.choices[0]?.delta?.content;
+        if (completion != null) {
+          ws.send(completion);
         }
-      });
+      }
+      console.log("Stream finished processing.");
+      ws.send("[DONE]");
 
-      // response.data.on('data', (chunk) => {
-      //   // Extract the text from the chunk
-      //   console.log("chunk", chunk);
-      //   const result = JSON.parse(chunk.toString()).choices[0]?.text?.trim();
-      //   console.log("result", result);
-      //
-      //   // Forward the result to the client via the WebSocket connection
-      //   if (result) {
-      //     ws.send(result);
-      //   }
-      // });
-
-      // Handle the end of the stream
-      response.data.on("end", () => {
-        // Notify the client that the stream has ended
-        ws.send("[DONE]");
-      });
-    } catch (error) {
+    } catch (error: any) {
       // Handle any errors that occur during the API call
-      // console.error("Error:", error);
-      ws.send(error + "");
+      console.error("Error during WebSocket message processing:", error);
+      ws.send(`[ERROR] ${error?.message || error}`);
+      // Consider closing the connection on significant errors
+      // ws.close();
     }
   });
 });
@@ -246,6 +214,9 @@ app.get("/api/examples", (req, res) => {
 app.get("/api/hello", (req, res) => {
   res.json({ message: "Hello from the server!" });
 });
+
+// Register the webpage fetching route
+app.use('/api', webpageRoutes);
 
 // Start the server
 app.listen(PORT, () => {

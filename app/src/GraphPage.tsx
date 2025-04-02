@@ -14,25 +14,8 @@ import { SERVER_HOST } from "./constants";
 import { MODELS } from "./models";
 import { FocusedContextProvider, isChild } from "./FocusedContext";
 import { ConfirmDeleteModal } from "./ConfirmDeleteModal";
-
-export interface QATreeNode {
-  question: string;
-  parent?: string;
-  answer: string;
-  children?: string[];
-  startedProcessing?: boolean;
-}
-
-export interface QATree {
-  [key: string]: QATreeNode;
-}
-
-export type NodeDims = {
-  [key: string]: {
-    width: number;
-    height: number;
-  };
-};
+import { QATree, QATreeNode, NodeDims, ScoredQuestion, NodeType } from "./types";
+import { InteractiveNodeData } from "./InteractiveNode";
 
 type TreeNode = Node & {
   parentNodeID: string;
@@ -44,8 +27,10 @@ type ConvertTreeToFlowProps = (
   requestDeleteBranch: (edgeId: string) => void,
   playing: boolean,
   generateAnswerForNode: (nodeId: string) => Promise<void>,
-  answeringNodes: Set<string>
-) => any;
+  answeringNodes: Set<string>,
+  setNodeData: (nodeId: string, dataChanges: Partial<QATreeNode>) => void,
+  requestAddUserNode: (parentId: string, newNodeType: NodeType) => void
+) => { nodes: Node<InteractiveNodeData>[]; edges: Edge[] };
 
 export const convertTreeToFlow: ConvertTreeToFlowProps = (
   tree,
@@ -53,66 +38,103 @@ export const convertTreeToFlow: ConvertTreeToFlowProps = (
   requestDeleteBranch,
   playing,
   generateAnswerForNode,
-  answeringNodes
+  answeringNodes,
+  setNodeData,
+  requestAddUserNode
 ) => {
-  const nodes: TreeNode[] = [];
+  const nodes: Node<InteractiveNodeData>[] = [];
   Object.keys(tree).forEach((key) => {
-    const isQuestion = true;
-    nodes.push({
-      id: `q-${key}`,
-      type: "fadeText",
+    const nodeData = tree[key];
+
+    // Ensure nodeData has nodeID, if migrating old data, assign one.
+    if (!nodeData.nodeID) {
+      console.warn(`Node data for key ${key} missing nodeID, assigning fallback.`);
+      nodeData.nodeID = key; // Or potentially infer based on type/parent
+    }
+
+    // Create the primary node (Question, File Input, Webpage Input)
+    const primaryNode: Node<InteractiveNodeData> = {
+      id: nodeData.nodeID, // Use the nodeID from the data directly
+      type: "interactiveNode", // Use the universal node type
       data: {
-        text: tree[key].question,
-        nodeID: `q-${key}`,
-        setNodeDims,
-        question: isQuestion,
-        hasAnswer: !!tree[key].answer,
-        onGenerateAnswer: generateAnswerForNode,
-        isAnswering: answeringNodes.has(key),
+        ...nodeData,
+        nodeID: nodeData.nodeID,
+        setNodeDims: setNodeDims,
+        setNodeData: setNodeData,
+        requestAddUserNode: requestAddUserNode,
+        onGenerateAnswer: (nodeData.nodeType === 'llm-question' || nodeData.nodeType === 'user-question') ? generateAnswerForNode : undefined,
+        isAnswering: (nodeData.nodeType === 'llm-question' || nodeData.nodeType === 'user-question') ? answeringNodes.has(key) : false,
       },
       position: { x: 0, y: 0 },
-      parentNodeID: tree[key].parent != null ? `a-${tree[key].parent}` : "",
-    });
-    if (tree[key].answer) {
-      const isAnswer = false;
-      nodes.push({
-        id: `a-${key}`,
-        type: "fadeText",
+      // parentNode property is for React Flow grouping/subflows, not layout linking.
+      // Edges define the visual connections.
+    };
+    nodes.push(primaryNode);
+
+    // If it's a question node AND has an answer, create a separate LLM_Answer node
+    if ((nodeData.nodeType === 'llm-question' || nodeData.nodeType === 'user-question') && nodeData.answer) {
+      const answerNodeId = `a-${nodeData.nodeID}`;
+      const answerNode: Node<InteractiveNodeData> = {
+        id: answerNodeId,
+        type: 'interactiveNode',
         data: {
-          text: tree[key].answer,
-          nodeID: `a-${key}`,
-          setNodeDims,
-          question: isAnswer,
+          ...nodeData, // Pass relevant data, override type and text
+          nodeID: answerNodeId,
+          setNodeDims: setNodeDims,
+          setNodeData: setNodeData,
+          requestAddUserNode: requestAddUserNode,
+          nodeType: 'llm-answer',
+          question: '', // Answer nodes don't have a question title
+          answer: nodeData.answer, // The actual answer content
         },
         position: { x: 0, y: 0 },
-        parentNodeID: `q-${key}`,
-      });
+      };
+      nodes.push(answerNode);
     }
   });
+
   const edges: Edge[] = [];
-  nodes.forEach((n) => {
-    if (n.parentNodeID != "") {
+  Object.values(tree).forEach((nodeData) => { // Iterate over original tree data for edge creation
+    // Ensure parentNodeID exists and corresponds to a node in the tree
+    const parentId = nodeData.parent;
+    if (parentId && tree[parentId]) { // Check if parent node exists in the tree by its ID
+      // Link from parent's ANSWER node (if exists) or parent node itself to the current QUESTION node
+      const sourceId = tree[parentId].answer ? `a-${parentId}` : parentId;
+
+      // Ensure the source node actually exists in our generated nodes list before creating edge
+      if (nodes.some(n => n.id === sourceId)) {
+        edges.push({
+          id: `${parentId}-${nodeData.nodeID}`, // Use consistent nodeIDs
+          type: 'deleteEdge',
+          source: sourceId,
+          target: nodeData.nodeID,
+          data: {
+            requestDeleteBranch,
+          },
+          animated: playing,
+          markerEnd: { type: MarkerType.Arrow },
+        });
+      }
+    }
+
+    // Add edge from Question node to its corresponding Answer node
+    if ((nodeData.nodeType === 'llm-question' || nodeData.nodeType === 'user-question') && nodeData.answer) {
+      const questionNodeId = nodeData.nodeID;
+      const answerNodeId = `a-${questionNodeId}`;
       edges.push({
-        id: `${n.parentNodeID}-${n.id}`,
-        type: "deleteEdge",
-        source: n.parentNodeID,
-        target: n.id,
-        data: {
-          requestDeleteBranch,
-        },
+        id: `${questionNodeId}-${answerNodeId}`,
+        type: 'deleteEdge', // Or a different edge type if needed
+        source: questionNodeId,
+        target: answerNodeId,
         animated: playing,
         markerEnd: { type: MarkerType.Arrow },
       });
     }
   });
+  console.log("Converted Nodes:", nodes); // Debugging
 
   return { nodes, edges };
 };
-
-export interface ScoredQuestion {
-  question: string;
-  score: number;
-}
 
 async function getQuestions(
   apiKey: ApiKey,
@@ -165,7 +187,7 @@ interface NodeGeneratorOpts {
   model: string;
   persona: string;
   questionQueue: string[];
-  qaTree: QATree;
+  qaTreeRef: React.MutableRefObject<QATree>;
   focusedId: string | null;
   onChangeQATree: () => void;
   onNodeGenerated: (completedNodeId: string) => void;
@@ -187,42 +209,43 @@ async function* nodeGenerator(
       throw new Error("Impossible");
     }
 
-    const node = opts.qaTree[nodeId];
+    const currentTree = opts.qaTreeRef.current;
+    const node = currentTree[nodeId];
     if (node == null) {
-      console.log(`Node ${nodeId} not found in generator, likely deleted.`);
+      console.log(`Node ${nodeId} not found in generator (likely deleted).`);
       yield;
       continue;
     }
     node.startedProcessing = true;
 
-    const promptForAnswer = PERSONAS[opts.persona].getPromptForAnswer(
-      node,
-      opts.qaTree
-    );
+    const promptForAnswer = PERSONAS[opts.persona].getPromptForAnswer(node, currentTree);
 
     await openai(promptForAnswer, {
       apiKey: opts.apiKey.key,
       temperature: 1,
       model: MODELS[opts.model].key,
       onChunk: (chunk) => {
-        const node = opts.qaTree[nodeId];
-        if (node == null) {
+        const currentTreeOnChunk = opts.qaTreeRef.current;
+        const nodeOnChunk = currentTreeOnChunk[nodeId];
+        if (nodeOnChunk == null) {
           console.log(`Node ${nodeId} disappeared during answer generation.`);
           return;
         }
-        node.answer += chunk;
+        nodeOnChunk.answer += chunk;
         opts.onChangeQATree();
       },
     });
 
-    if (!opts.qaTree[nodeId]) {
+    if (!opts.qaTreeRef.current[nodeId]) {
       console.log(`Node ${nodeId} was deleted after answer generation completed.`);
       yield;
       continue;
     }
 
-    console.log(`Complete answer for node ${nodeId}:`, node.answer);
-    console.log(`Length of answer for node ${nodeId}:`, node.answer.length);
+    const updatedNode = opts.qaTreeRef.current[nodeId];
+
+    console.log(`Complete answer for node ${nodeId}:`, updatedNode.answer);
+    console.log(`Length of answer for node ${nodeId}:`, updatedNode.answer.length);
 
     opts.onChangeQATree();
     yield;
@@ -232,10 +255,10 @@ async function* nodeGenerator(
       opts.apiKey,
       opts.model,
       opts.persona,
-      node,
-      opts.qaTree,
+      updatedNode,
+      opts.qaTreeRef.current,
       (partial) => {
-        if (!opts.qaTree[nodeId]) {
+        if (!opts.qaTreeRef.current[nodeId]) {
           console.log(`Parent node ${nodeId} deleted before questions could be attached.`);
           return;
         }
@@ -244,22 +267,24 @@ async function* nodeGenerator(
           for (let i = ids.length; i < partial.length; i++) {
             const newId = Math.random().toString(36).substring(2, 9);
             ids.push(newId);
-            opts.qaTree[newId] = {
-              question: "",
+            opts.qaTreeRef.current[newId] = {
+              nodeID: newId,
               parent: nodeId,
+              question: "",
               answer: "",
+              nodeType: 'llm-question',
             };
 
-            if (opts.qaTree[nodeId].children == null) {
-              opts.qaTree[nodeId].children = [newId];
+            if (opts.qaTreeRef.current[nodeId].children == null) {
+              opts.qaTreeRef.current[nodeId].children = [newId];
             } else {
-              opts.qaTree[nodeId].children?.push(newId);
+              opts.qaTreeRef.current[nodeId].children?.push(newId);
             }
           }
         }
         for (let i = 0; i < partial.length; i++) {
-          if(opts.qaTree[ids[i]]) {
-            opts.qaTree[ids[i]].question = partial[i].question;
+          if(opts.qaTreeRef.current[ids[i]]) {
+            opts.qaTreeRef.current[ids[i]].question = partial[i].question;
           }
         }
         opts.onChangeQATree();
@@ -270,9 +295,9 @@ async function* nodeGenerator(
     yield;
 
     ids.forEach((id) => {
-      if (opts.qaTree[id] &&
-          !opts.qaTree[id].startedProcessing &&
-          (!opts.focusedId || isChild(opts.qaTree, opts.focusedId, id)))
+      if (opts.qaTreeRef.current[id] &&
+          !opts.qaTreeRef.current[id].startedProcessing &&
+          (!opts.focusedId || isChild(opts.qaTreeRef.current, opts.focusedId, id)))
        {
         opts.questionQueue.push(id);
       }
@@ -426,6 +451,48 @@ function GraphPage(props: {
   const [isConfirmModalOpen, setIsConfirmModalOpen] = useState(false);
   const [edgeToDelete, setEdgeToDelete] = useState<string | null>(null);
 
+  const setNodeData = useCallback((nodeId: string, dataChanges: Partial<QATreeNode>) => {
+      qaTreeRef.current = {
+          ...qaTreeRef.current,
+          [nodeId]: {
+              ...qaTreeRef.current[nodeId],
+              ...dataChanges,
+          },
+      };
+      setResultTree(JSON.parse(JSON.stringify(qaTreeRef.current)));
+  }, []);
+
+  const requestAddUserNode = useCallback((parentId: string, newNodeType: NodeType) => {
+      const parentNode = qaTreeRef.current[parentId];
+      if (!parentNode) {
+          console.error(`Parent node ${parentId} not found for adding new user node.`);
+          return;
+      }
+
+      const prefix = newNodeType.split('-')[1][0];
+      const newIdSuffix = Math.random().toString(36).substring(2, 7);
+      const newNodeId = `${prefix}-${newIdSuffix}`;
+
+      const newNode: QATreeNode = {
+          nodeID: newNodeId,
+          nodeType: newNodeType,
+          question: newNodeType === 'user-question' ? '' : `New ${newNodeType.split('-')[1]} node`,
+          answer: '',
+          parent: parentId,
+          children: [],
+          isLoading: false,
+      };
+
+      qaTreeRef.current = {
+          ...qaTreeRef.current,
+          [newNodeId]: newNode,
+      };
+      qaTreeRef.current[parentId].children = [...(parentNode.children || []), newNodeId];
+
+      setResultTree(JSON.parse(JSON.stringify(qaTreeRef.current)));
+      console.log(`Added new node ${newNodeId} of type ${newNodeType} as child of ${parentId}`);
+  }, []);
+
   const generateAnswerForNode = useCallback(
     async (nodeId: string) => {
       console.log("Manual trigger for node:", nodeId);
@@ -449,22 +516,22 @@ function GraphPage(props: {
           apiKey: props.apiKey,
           model: props.model,
           persona: props.persona,
-          qaTree: qaTreeRef.current,
+          qaTreeRef: qaTreeRef,
         };
 
         const promptForAnswer = PERSONAS[commonOpts.persona].getPromptForAnswer(
           node,
-          commonOpts.qaTree
+          commonOpts.qaTreeRef.current
         );
         await openai(promptForAnswer, {
           apiKey: commonOpts.apiKey.key,
           temperature: 1,
           model: MODELS[commonOpts.model].key,
           onChunk: (chunk) => {
-            const currentNode = commonOpts.qaTree[nodeId];
+            const currentNode = commonOpts.qaTreeRef.current[nodeId];
             if (currentNode) {
               currentNode.answer += chunk;
-              setResultTree(JSON.parse(JSON.stringify(commonOpts.qaTree)));
+              setResultTree(JSON.parse(JSON.stringify(commonOpts.qaTreeRef.current)));
             }
           },
         });
@@ -473,7 +540,7 @@ function GraphPage(props: {
           console.log(`Node ${nodeId} was deleted after answer generation completed.`);
           return;
         }
-        setResultTree(JSON.parse(JSON.stringify(commonOpts.qaTree)));
+        setResultTree(JSON.parse(JSON.stringify(qaTreeRef.current)));
 
         await new Promise(resolve => setTimeout(resolve, 100));
         console.log("Delayed for 100ms");
@@ -489,7 +556,7 @@ function GraphPage(props: {
           commonOpts.model,
           commonOpts.persona,
           qaTreeRef.current[nodeId],
-          commonOpts.qaTree,
+          commonOpts.qaTreeRef.current,
           (partial) => {
               if (!qaTreeRef.current[nodeId]) {
                   console.log(`Parent node ${nodeId} deleted while processing partial questions.`);
@@ -499,12 +566,14 @@ function GraphPage(props: {
               for (let i = questionIds.length; i < partial.length; i++) {
                 const newId = Math.random().toString(36).substring(2, 9);
                 questionIds.push(newId);
-                commonOpts.qaTree[newId] = {
+                commonOpts.qaTreeRef.current[newId] = {
+                  nodeID: newId,
                   question: "",
                   parent: nodeId,
                   answer: "",
+                  nodeType: 'llm-question',
                 };
-                const parentNode = commonOpts.qaTree[nodeId];
+                const parentNode = commonOpts.qaTreeRef.current[nodeId];
                 if (parentNode) {
                   if (!parentNode.children) parentNode.children = [];
                   parentNode.children.push(newId);
@@ -512,14 +581,14 @@ function GraphPage(props: {
               }
             }
             for (let i = 0; i < partial.length; i++) {
-              if(commonOpts.qaTree[questionIds[i]]) {
-                commonOpts.qaTree[questionIds[i]].question = partial[i].question;
+              if(commonOpts.qaTreeRef.current[questionIds[i]]) {
+                commonOpts.qaTreeRef.current[questionIds[i]].question = partial[i].question;
               }
             }
-            setResultTree(JSON.parse(JSON.stringify(commonOpts.qaTree)));
+            setResultTree(JSON.parse(JSON.stringify(commonOpts.qaTreeRef.current)));
           }
         );
-        setResultTree(JSON.parse(JSON.stringify(commonOpts.qaTree)));
+        setResultTree(JSON.parse(JSON.stringify(qaTreeRef.current)));
 
       } catch (error) {
         console.error(`Error generating answer/questions for node ${nodeId}:`, error);
@@ -544,8 +613,10 @@ function GraphPage(props: {
     questionQueueRef.current = ["0"];
     qaTreeRef.current = {
       "0": {
+        nodeID: '0',
         question: props.seedQuery,
         answer: "",
+        nodeType: 'llm-question',
       },
     };
     setResultTree(qaTreeRef.current);
@@ -557,7 +628,7 @@ function GraphPage(props: {
         model: props.model,
         persona: props.persona,
         questionQueue: questionQueueRef.current,
-        qaTree: qaTreeRef.current,
+        qaTreeRef: qaTreeRef,
         focusedId: null,
         onChangeQATree: () => {
           setResultTree(JSON.parse(JSON.stringify(qaTreeRef.current)));
@@ -661,8 +732,17 @@ function GraphPage(props: {
   }, [edgeToDelete]);
 
   const { nodes, edges } = useMemo(() => {
-    return convertTreeToFlow(resultTree, setNodeDims, requestDeleteBranch, playing, generateAnswerForNode, answeringNodes);
-  }, [resultTree, playing, requestDeleteBranch, answeringNodes, generateAnswerForNode]);
+    return convertTreeToFlow(
+        resultTree,
+        setNodeDims,
+        requestDeleteBranch,
+        playing,
+        generateAnswerForNode,
+        answeringNodes,
+        setNodeData,
+        requestAddUserNode
+    );
+  }, [resultTree, playing, requestDeleteBranch, answeringNodes, generateAnswerForNode, setNodeData, requestAddUserNode]);
 
   function resume() {
     if (!playing) {

@@ -8,6 +8,7 @@ import ReactFlow, {
   Node,
   Position,
   ReactFlowProvider,
+  Viewport,
   useEdgesState,
   useNodesState,
   useReactFlow,
@@ -15,9 +16,9 @@ import ReactFlow, {
 import dagre from "dagre";
 
 import "reactflow/dist/style.css";
-import { FadeoutTextNode } from "./FadeoutTextNode";
+import { InteractiveNode } from "./InteractiveNode";
 import { DeletableEdge } from "./DeletableEdge";
-import { NodeDims } from "./GraphPage";
+import { NodeDims } from "./types";
 import { getFingerprint } from "./main";
 import { SERVER_HOST_WS } from "./constants";
 
@@ -31,7 +32,7 @@ import {
 } from "@heroicons/react/24/solid";
 // --- End Import Icons ---
 
-const nodeTypes = { fadeText: FadeoutTextNode };
+const nodeTypes = { interactiveNode: InteractiveNode };
 const edgeTypes = { deleteEdge: DeletableEdge };
 
 // Layout the nodes automatically
@@ -374,7 +375,7 @@ export const Flow: React.FC<FlowProps> = (props) => {
         panOnScroll
         minZoom={minZoomSlider}
         maxZoom={maxZoomSlider}
-        onViewportChange={(_viewport) => setCurrentZoom(_viewport.zoom)}
+        onMoveEnd={(_event, viewport) => setCurrentZoom(viewport.zoom)}
       >
         <MiniMap nodeStrokeWidth={3} zoomable pannable />
         <Background color="#aaa" gap={16} />

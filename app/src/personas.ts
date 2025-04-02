@@ -1,4 +1,5 @@
-import { QATree, QATreeNode, ScoredQuestion } from "./GraphPage";
+import { QATree, QATreeNode, ScoredQuestion } from "./types";
+import { Node, Edge } from "reactflow";
 
 // 107 tokens
 const QUESTIONS_FORMAT_EXPLANATION = `
@@ -21,6 +22,50 @@ export type Persona = {
     promptForRandomQuestion: string;
     getPromptForAnswer(node: QATreeNode, tree: QATree): string;
 } & (WithGetPromptForQuestions | WithGetQuestions);
+
+// Helper function to get ancestry context
+const getAncestryContext = (nodeId: string, tree: QATree): string => {
+    let context = "";
+    const MAX_CONTEXT_LENGTH = 4000; // Limit context size (adjust as needed)
+    let currentNodeId: string | undefined = nodeId;
+
+    const visited = new Set<string>(); // Prevent infinite loops in case of cycles
+
+    while (currentNodeId && !visited.has(currentNodeId)) {
+        visited.add(currentNodeId);
+        const node: QATreeNode | undefined = tree[currentNodeId];
+        if (!node) break;
+
+        if (node.parent) {
+            const parentNode = tree[node.parent];
+            if (parentNode) {
+                let piece = "";
+                if (parentNode.nodeType === 'user-file' && parentNode.answer) {
+                    const filename = parentNode.fileInfo?.name || 'uploaded file';
+                    piece = `[Context from file '${filename}']:\n${parentNode.answer}\n\n`;
+                } else if (parentNode.nodeType === 'user-webpage' && parentNode.answer) {
+                    const url = parentNode.url || 'webpage';
+                    piece = `[Context from URL '${url}']:\n${parentNode.answer}\n\n`;
+                }
+
+                // Prepend piece only if it doesn't exceed the limit
+                if (context.length + piece.length <= MAX_CONTEXT_LENGTH) {
+                    context = piece + context; // Prepend to maintain order
+                } else {
+                    console.warn("Ancestry context truncated due to length limits.");
+                    break; // Stop adding context if limit exceeded
+                }
+                currentNodeId = node.parent;
+            } else {
+                break; // Parent node not found
+            }
+        } else {
+            break; // Reached root
+        }
+    }
+
+    return context;
+};
 
 export const PERSONAS: { [key: string]: Persona } = {
     researcher: {
@@ -110,10 +155,10 @@ export const PERSONAS: { [key: string]: Persona } = {
                 You may respond:
 
                 The downside of take home assessments is that anyone can do it. You could hand off the assignment to a friend, or even hire someone to do it. So figure 1 hour for the take home + 1 hour for an additional interview where we ask questions about the take home to make sure you actually know what you are doing.
-                At my job, we designed our interview process around the question: “what is the minimum coding exercise that we expect anyone we hire to be able to do?”
+                At my job, we designed our interview process around the question: "what is the minimum coding exercise that we expect anyone we hire to be able to do?"
                 This has resulted in an interview where we do ~30 minutes of coding, stuff like: function to reverse a string, function to add an array of numbers, find the largest number in an array of integers.
-                From there the rest of the interview is conversational. If the candidate is frontend we may dive into X, Y, Z technology. For example, if someone has 5+ years of React experience but doesn’t know what a hook is, that’s a red flag, etc.
-                You’d be surprised how many people are absolute garbage at those simple coding questions, despite having years of experience. And everyone that cruises those questions has been a great hire thus far, assuming no other red flags like bad culture fit or poor communication etc.
+                From there the rest of the interview is conversational. If the candidate is frontend we may dive into X, Y, Z technology. For example, if someone has 5+ years of React experience but doesn't know what a hook is, that's a red flag, etc.
+                You'd be surprised how many people are absolute garbage at those simple coding questions, despite having years of experience. And everyone that cruises those questions has been a great hire thus far, assuming no other red flags like bad culture fit or poor communication etc.
 
                 Answer this question (in the English language): ${node.question}`;
             }
@@ -129,10 +174,10 @@ export const PERSONAS: { [key: string]: Persona } = {
               You may respond:
 
               The downside of take home assessments is that anyone can do it. You could hand off the assignment to a friend, or even hire someone to do it. So figure 1 hour for the take home + 1 hour for an additional interview where we ask questions about the take home to make sure you actually know what you are doing.
-              At my job, we designed our interview process around the question: “what is the minimum coding exercise that we expect anyone we hire to be able to do?”
+              At my job, we designed our interview process around the question: "what is the minimum coding exercise that we expect anyone we hire to be able to do?"
               This has resulted in an interview where we do ~30 minutes of coding, stuff like: function to reverse a string, function to add an array of numbers, find the largest number in an array of integers.
-              From there the rest of the interview is conversational. If the candidate is frontend we may dive into X, Y, Z technology. For example, if someone has 5+ years of React experience but doesn’t know what a hook is, that’s a red flag, etc.
-              You’d be surprised how many people are absolute garbage at those simple coding questions, despite having years of experience. And everyone that cruises those questions has been a great hire thus far, assuming no other red flags like bad culture fit or poor communication etc.
+              From there the rest of the interview is conversational. If the candidate is frontend we may dive into X, Y, Z technology. For example, if someone has 5+ years of React experience but doesn't know what a hook is, that's a red flag, etc.
+              You'd be surprised how many people are absolute garbage at those simple coding questions, despite having years of experience. And everyone that cruises those questions has been a great hire thus far, assuming no other red flags like bad culture fit or poor communication etc.
 
               Some previously asked this question: ${parentNode.question}
               Someone responded with this answer: ${parentNode.answer}
@@ -201,6 +246,37 @@ export const PERSONAS: { [key: string]: Persona } = {
         },
         getQuestions: () => {
             return [{ question: `Why?`, score: 10 }];
+        },
+    },
+    default: {
+        name: "Default",
+        description: "A default persona",
+        promptForRandomQuestion:
+            "Write a random but interesting 'why' question. Only write the question, with no quotes.",
+        getPromptForAnswer: (node, tree) => {
+            // Get context from user-file/user-webpage ancestors
+            const ancestryContext = getAncestryContext(node.nodeID, tree);
+
+            const prompt = `Question: ${node.question}\nAnswer:`;
+
+            if (ancestryContext) {
+                return `${ancestryContext}Based on the preceding context, answer the following question:\n\n${prompt}`;
+            } else {
+                return prompt; // Original prompt if no context found
+            }
+        },
+        getPromptForQuestions: (node) => {
+            return `Given a question/answer pair, generate a likely persona who asked
+            that question. And then pretend you are that persona and write the most interesting 1-2 follow-up questions that this persona would enjoy learning about the most, in the English language.  For each follow-up question, provide the persona summary & a numeric score from 1 to 10 rating how interesting the question may be to your persona. Format your answer as a JSON array like this: [{"question": "...", "score": 1, "persona_summary": "..."}, {"question": "...", "score": 2, "persona_summary": "..."}, ...]
+
+            Your number 1 priority is to generate the most interesting questions that help your generated persona the most.
+
+            Question: ${node.question}
+            Information/Answer to the question: ${node.answer}
+
+            For example, if you think the question "Why is the sky blue?" is interesting, you would write: [{"question": "Why is the sky blue?", "score": 10, "persona_summary": "Young man thinking about the scientific nature of the universe and our planet"}]
+            Your answer should be in markdown syntax in the English language.
+            Your answer: `;
         },
     },
 };
