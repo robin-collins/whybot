@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState, Dispatch, SetStateAction } from "react";
 import { FlowProvider } from "./Flow";
-import { convertTreeToFlow, NodeDims, QATree } from "./GraphPage";
+import { convertTreeToFlow } from "./GraphPage";
+import { QATree, NodeDims } from "./types";
 import { ArrowLeftIcon } from "@heroicons/react/24/solid";
-import { Example } from "./App";
+import { Example } from "./StartPage";
 import "./GraphPageExample.css";
 
 export const streamQuestion = async (
@@ -57,7 +58,7 @@ export const streamQANode = async (
   growingTree: QATree,
   exampleTree: QATree,
   setResultTree: Dispatch<SetStateAction<QATree>>
-) => {
+): Promise<string> => {
   return new Promise(async (resolve) => {
     // reference text
     const node = exampleTree[id];
@@ -68,6 +69,8 @@ export const streamQANode = async (
         answer: "",
         parent: node.parent,
         children: node.children,
+        nodeType: node.nodeType,
+        nodeID: id,
       };
     }
 
@@ -96,7 +99,7 @@ export const streamExample = async (
         nextLayer = [...nextLayer, ...children];
       }
     }
-    const promises = [];
+    const promises: Promise<string>[] = [];
     for (const id of nextLayer) {
       promises.push(streamQANode(id, growingTree, exampleTree, setResultTree));
     }
@@ -115,12 +118,21 @@ export function GraphPageExample({ example, onExit }: GraphPageExampleProps) {
   const [resultTree, setResultTree] = useState<QATree>({});
   const [nodeDims, setNodeDims] = useState<NodeDims>({});
   const { nodes, edges } = useMemo(() => {
-    return convertTreeToFlow(resultTree, setNodeDims, () => {}, true);
+    return convertTreeToFlow(
+      resultTree,
+      setNodeDims,
+      () => {},
+      false,
+      () => Promise.resolve(),
+      new Set<string>(),
+      () => {},
+      () => {}
+    );
   }, [resultTree]);
 
   useEffect(() => {
     streamExample(example, setResultTree);
-  }, []);
+  }, [example]);
 
   return (
     <div className="text-sm graph-page-example">
@@ -129,6 +141,8 @@ export function GraphPageExample({ example, onExit }: GraphPageExampleProps) {
         flowEdges={edges}
         nodeDims={nodeDims}
         deleteBranch={() => {}}
+        onConnectStart={() => {}}
+        onConnectEnd={() => {}}
       />
       <div
         onClick={() => {

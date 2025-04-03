@@ -1,11 +1,7 @@
----
-description: Cursor rules derived by SpecStory from the project AI interaction history
-globs: *
----
 
 ## PROJECT OVERVIEW
 
-This project aims to build a knowledge graph exploration tool using a combination of React, Cytoscape.js, and OpenAI's API.  The application allows users to input a question, explore related concepts, and generate a visual graph representation of their knowledge exploration.  The application incorporates various features such as graph persistence, export/import functionalities, and a user-friendly interface. Version 1.0.0 of the graph export format is currently implemented.
+This project aims to build a knowledge graph exploration tool using a combination of React, Cytoscape.js, and OpenAI's API.  The application allows users to input a question, explore related concepts, and generate a visual graph representation of their knowledge exploration.  The project incorporates various features such as graph persistence, export/import functionalities, and user-friendly interface elements.  Version 1.0.0 of the graph export format is currently implemented.
 
 
 ## CODE STYLE
@@ -124,8 +120,7 @@ The project uses a structured folder organization to enhance maintainability and
  - Use verbose logging in the backend server (set LOGGING_LEVEL to "debug") to track requests, responses, and WebSocket connections. The server logs to a file named `server-{DATETIME}.log` in the `server/logs` directory, where DATETIME is the current date and time.
  - Implement comprehensive error handling and logging throughout the application.
  - Add logging statements to the `layoutElements` function in `app/src/Flow.tsx` to debug node positioning issues.  Specifically, log the dimensions received from `nodeDims` and the dimensions used by `dagre` for answer nodes.  Further debugging revealed the need for additional logging within `layoutElements` to track the dimensions received from `nodeDims` and those used by `dagre`.  This logging will help identify if the issue is with the data passed to `layoutElements` or with `dagre` itself.
- - **Frontend Logging to Backend:**  The frontend can send log messages to the backend via the existing WebSocket connection for display in the server's terminal console.  This requires modifications to both the frontend and backend to handle the transmission and logging of these messages.  This feature is requested in 2025-04-03_01-18-logging-from-frontend-to-terminal-console.md.  The frontend cannot directly log to the terminal where the Vite server is running.  Instead, log messages should be sent to the backend via the WebSocket connection and then logged to the terminal from the backend.
-
+ 
 
  ## FINAL DOs AND DON'Ts
 

@@ -51,15 +51,13 @@ const logEnvVar = (envVar, name) => {
 logEnvVar(process.env.FIREBASE_PRIVATE_KEY, "FIREBASE_PRIVATE_KEY");
 logEnvVar(process.env.OPENAI_API_KEY, "OPENAI_API_KEY");
 logEnvVar(process.env.MAX_TOKENS, "MAX_TOKENS");
+// Check for GOOGLE_APPLICATION_CREDENTIALS which is needed for applicationDefault()
+logEnvVar(process.env.GOOGLE_APPLICATION_CREDENTIALS, "GOOGLE_APPLICATION_CREDENTIALS");
 (0, app_1.initializeApp)({
-    credential: firebase_admin_1.credential.cert({
-        projectId: process.env.FIREBASE_PROJECT_ID,
-        // privateKey: process.env.FIREBASE_PRIVATE_KEY,
-        privateKey: process.env.FIREBASE_PRIVATE_KEY
-            ? process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, "\n")
-            : undefined,
-        clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-    }),
+    // Use application default credentials.
+    // This automatically looks for the GOOGLE_APPLICATION_CREDENTIALS environment variable
+    // pointing to your service account key file, or other standard credential sources.
+    credential: firebase_admin_1.credential.applicationDefault(),
 });
 const MAX_TOKENS = parseInt((_a = process.env.MAX_TOKENS) !== null && _a !== void 0 ? _a : "4096");
 const db = (0, firestore_1.getFirestore)();
@@ -112,6 +110,8 @@ wss.on("connection", (ws) => {
         try {
             // Parse the message from the client
             const data = JSON.parse(message.toString());
+            // Assuming data has a unique identifier like nodeId
+            const nodeId = data.nodeId; // Adjust if the identifier has a different name
             try {
                 const documentRef = yield db
                     .collection("completions")
@@ -121,9 +121,8 @@ wss.on("connection", (ws) => {
             catch (error) {
                 console.error("Error while adding document:", error);
             }
-            console.log("data", data);
-            // Call the OpenAI API and wait for the response
-            const stream = yield openai.chat.completions.create({
+            // console.log("Sending the following data to the OpenAI API:", data);
+            const oai_request_json = {
                 model: data.model,
                 stream: true,
                 messages: [
@@ -136,14 +135,19 @@ wss.on("connection", (ws) => {
                 max_tokens: MAX_TOKENS,
                 temperature: data.temperature,
                 n: 1,
-            });
+            };
+            // Call the OpenAI API and wait for the response
+            const stream = yield openai.chat.completions.create(oai_request_json);
+            let oai_response_json = "";
             try {
                 // Process the stream using async iteration
                 for (var stream_1 = __asyncValues(stream), stream_1_1; stream_1_1 = yield stream_1.next(), !stream_1_1.done;) {
                     const part = stream_1_1.value;
                     const completion = (_c = (_b = part.choices[0]) === null || _b === void 0 ? void 0 : _b.delta) === null || _c === void 0 ? void 0 : _c.content;
                     if (completion != null) {
-                        ws.send(completion);
+                        oai_response_json += completion;
+                        // Send chunk with nodeId
+                        ws.send(JSON.stringify({ type: 'chunk', nodeId, content: completion }));
                     }
                 }
             }
@@ -154,13 +158,26 @@ wss.on("connection", (ws) => {
                 }
                 finally { if (e_1) throw e_1.error; }
             }
-            console.log("Stream finished processing.");
-            ws.send("[DONE]");
+            console.log("OA Response Stream finished.");
+            console.log("----------------------------------------------------------------");
+            console.log(oai_response_json);
+            console.log("----------------------------------------------------------------");
+            // Send done signal with nodeId
+            ws.send(JSON.stringify({ type: 'done', nodeId }));
         }
         catch (error) {
             // Handle any errors that occur during the API call
             console.error("Error during WebSocket message processing:", error);
-            ws.send(`[ERROR] ${(error === null || error === void 0 ? void 0 : error.message) || error}`);
+            // Send error signal with nodeId
+            const nodeId = (() => {
+                try {
+                    return JSON.parse(message.toString()).nodeId;
+                }
+                catch (_a) {
+                    return null; // Or some default/error identifier
+                }
+            })();
+            ws.send(JSON.stringify({ type: 'error', nodeId, message: (error === null || error === void 0 ? void 0 : error.message) || String(error) }));
             // Consider closing the connection on significant errors
             // ws.close();
         }

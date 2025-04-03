@@ -5,7 +5,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import "./fadeout-text.css";
 import classNames from "classnames";
-import { NodeDims } from "./GraphPage";
+import { NodeDims } from "./types";
 import { useFocused } from "./FocusedContext";
 
 console.log("FadeoutTextNode");

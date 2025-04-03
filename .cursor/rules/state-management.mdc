@@ -1,0 +1,244 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+# WhyBot Zustand Integration: Rules and Guidelines
+
+This document outlines the best practices and standards for using Zustand state management within the WhyBot application. Adhering to these guidelines will help improve code clarity, maintainability, and address existing state management complexities.
+
+## CODE STYLE
+
+1.  **TypeScript Usage:**
+    *   Always define clear TypeScript interfaces for your store's state and actions.
+    *   Use the `create<MyState>()(...)` syntax with explicit type parameters when defining stores to ensure type safety. (Reference: [Zustand TS Guide - Basic Usage](https://zustand.docs.pmnd.rs/guides/typescript#basic-usage))
+
+2.  **Store Naming:**
+    *   Use clear and descriptive names for store hooks, typically following the pattern `use[Feature]Store` (e.g., `useGraphStore`, `useSettingsStore`).
+
+3.  **Formatting & Linting:**
+    *   Continue using Prettier and ESLint as configured in the project for consistent code style across all files, including store definitions.
+
+4.  **Comments:**
+    *   Add JSDoc or inline comments to explain the purpose of state slices, complex actions, or selectors within the store definition. This is crucial for maintainability.
+
+## PROJECT-SPECIFIC STANDARDS
+
+1.  **Single Global Store (Initially):**
+    *   Start by consolidating the primary application state (especially the `qaTree`, `playing` status, `focusedId`, `apiKey`, `model`, `persona`) into a single Zustand store (e.g., `useAppStore`).
+    *   While Zustand supports splitting stores (slices), begin with a single store for simplicity, mirroring the currently centralized (though complex) state logic in `GraphPage.tsx`. (Reference: [Zustand Flux Guide - Single Store](https://zustand.docs.pmnd.rs/guides/flux-inspired-practice#single-store))
+
+2.  **Store Structure (Colocation):**
+    *   Define both state variables and the actions that modify them together within the `create` function. (Reference: [Zustand Flux Guide - Colocate Actions](https://zustand.docs.pmnd.rs/guides/flux-inspired-practice#colocate-store-actions))
+    *   Example:
+        ```typescript
+        interface AppState {
+          qaTree: QATree;
+          playing: boolean;
+          // ... other state
+          setPlaying: (isPlaying: boolean) => void;
+          addNode: (node: QATreeNode) => void;
+          // ... other actions
+        }
+
+        const useAppStore = create<AppState>()(immer((set, get) => ({
+          qaTree: { /* initial tree */ },
+          playing: true,
+          // ...
+          setPlaying: (isPlaying) => set({ playing: isPlaying }),
+          addNode: (node) => set((state) => {
+            state.qaTree[node.nodeID] = node;
+            // Potentially update parent's children array immutably here
+            if (node.parent && state.qaTree[node.parent]) {
+               state.qaTree[node.parent].children = [...(state.qaTree[node.parent].children || []), node.nodeID];
+            }
+          }),
+          // ...
+        })));
+        ```
+
+3.  **Updating State (Immutability + Immer):**
+    *   **MUST** use the `set` function provided by `create` to update state.
+    *   Zustand performs a shallow merge by default. (Reference: [Zustand Immutable State Guide](https://zustand.docs.pmnd.rs/guides/immutable-state-and-merging))
+    *   **STRONGLY RECOMMENDED:** Use the `immer` middleware for updating nested state, especially the `qaTree`. This drastically simplifies immutable updates compared to manual spreading and avoids the pitfalls of the previous `ref` + `clone` pattern. (Reference: [Zustand Immer Middleware](https://zustand.docs.pmnd.rs/integrations/immer-middleware), [Zustand Updating State Guide](https://zustand.docs.pmnd.rs/guides/updating-state#with-immer))
+        *   Wrap the state creator function with `immer`: `create<AppState>()(immer((set, get) => ({ ... })))`.
+        *   Inside actions, mutate the `state` draft directly: `set(state => { state.qaTree[nodeId].answer = newAnswer; })`.
+
+4.  **Accessing State (Selectors):**
+    *   **MUST** use selector functions within components to access state slices. `const bears = useAppStore(state => state.bears);`.
+    *   This ensures components only re-render when the *specific* selected state changes.
+    *   When selecting multiple values or derived objects/arrays, **MUST** use the `useShallow` hook (or `shallow` from `zustand/shallow` if using `createWithEqualityFn`) to prevent unnecessary re-renders caused by new object/array references on every render. (Reference: [Zustand useShallow Hook](https://zustand.docs.pmnd.rs/hooks/use-shallow), [Zustand Prevent Rerenders Guide](https://zustand.docs.pmnd.rs/guides/prevent-rerenders-with-use-shallow))
+        *   Example: `const { tree, playing } = useAppStore(useShallow(state => ({ tree: state.qaTree, playing: state.playing })));`
+
+5.  **Asynchronous Operations (Generator):**
+    *   Keep the existing `nodeGenerator` logic largely separate from the store actions initially.
+    *   The generator should:
+        *   Read necessary state from the store using `useAppStore.getState()`.
+        *   Perform its async operations (like calling `openai`).
+        *   Call store actions (e.g., `useAppStore.getState().updateNodeAnswer(nodeId, chunk)`) to update the state with results.
+    *   Store actions themselves should remain synchronous where possible (just calling `set`).
+
+6.  **Replacing `ref` + `clone`:**
+    *   The pattern of mutating `qaTreeRef.current` and then calling `setResultTree(structuredClone(qaTreeRef.current))` in `GraphPage.tsx` **MUST** be replaced by Zustand state management using immutable updates (ideally via the `immer` middleware).
+
+## REFERENCE EXAMPLES
+
+**1. Store Definition (using Immer):**
+
+```typescript
+import { create } from 'zustand';
+import { immer } from 'zustand/middleware/immer';
+import { devtools } from 'zustand/middleware/devtools';
+import { QATree, QATreeNode } from './types'; // Assuming types.ts exists
+
+interface AppState {
+  qaTree: QATree;
+  playing: boolean;
+  focusedId: string | null;
+  setPlaying: (isPlaying: boolean) => void;
+  setFocusedId: (id: string | null) => void;
+  updateNode: (nodeId: string, changes: Partial<QATreeNode>) => void;
+  addNode: (node: QATreeNode) => void;
+  // ... other state and actions
+}
+
+// Wrap with devtools and immer
+export const useAppStore = create<AppState>()(
+  devtools(
+    immer((set, get) => ({
+      // Initial State
+      qaTree: {
+        '0': { nodeID: '0', question: 'Initial Seed', answer: '', nodeType: 'llm-question', children: [] },
+      },
+      playing: true,
+      focusedId: null,
+
+      // Actions
+      setPlaying: (isPlaying) => set({ playing: isPlaying }),
+
+      setFocusedId: (id) => set({ focusedId: id }),
+
+      updateNode: (nodeId, changes) =>
+        set((state) => {
+          if (state.qaTree[nodeId]) {
+            Object.assign(state.qaTree[nodeId], changes);
+          } else {
+            console.warn(`Attempted to update non-existent node: ${nodeId}`);
+          }
+        }),
+
+      addNode: (node) =>
+        set((state) => {
+          if (state.qaTree[node.nodeID]) {
+             console.warn(`Attempted to add duplicate node: ${node.nodeID}`);
+             return;
+          }
+          state.qaTree[node.nodeID] = node;
+          // Add to parent's children if parent exists
+          if (node.parent && state.qaTree[node.parent]) {
+            const parent = state.qaTree[node.parent];
+            // Ensure children array exists and node isn't already present
+            if (!parent.children) {
+                parent.children = [];
+            }
+            if (!parent.children.includes(node.nodeID)) {
+                 parent.children.push(node.nodeID);
+            }
+          }
+        }),
+
+      // ... other actions
+    })),
+    { name: 'WhyBotAppStore' } // Name for Redux DevTools
+  )
+);
+```
+
+**2. Component Usage (Selecting Single Value):**
+
+```typescript
+import React from 'react';
+import { useAppStore } from './store'; // Adjust path
+
+function PlayPauseButton() {
+  const playing = useAppStore((state) => state.playing);
+  const setPlaying = useAppStore((state) => state.setPlaying);
+
+  return (
+    <button onClick={() => setPlaying(!playing)}>
+      {playing ? 'Pause' : 'Play'}
+    </button>
+  );
+}
+```
+
+**3. Component Usage (Selecting Multiple Values with `useShallow`):**
+
+```typescript
+import React from 'react';
+import { useShallow } from 'zustand/react/shallow';
+import { useAppStore } from './store'; // Adjust path
+
+function GraphComponent() {
+  // Use useShallow to prevent re-renders if qaTree/playing references change
+  // but their shallow content hasn't. Essential for objects/arrays.
+  const { qaTree, playing } = useAppStore(
+    useShallow((state) => ({
+      qaTree: state.qaTree,
+      playing: state.playing,
+    }))
+  );
+
+  // Use qaTree and playing to render the graph...
+  return <div>{/* Graph rendering logic */}</div>;
+}
+```
+
+**4. Calling an Action:**
+
+```typescript
+import React from 'react';
+import { useAppStore } from './store';
+
+function FocusSetterComponent({ nodeId }: { nodeId: string }) {
+  const setFocusedId = useAppStore((state) => state.setFocusedId);
+
+  return <div onClick={() => setFocusedId(nodeId)}>Focus Node {nodeId}</div>;
+}
+```
+
+## DEBUGGING
+
+1.  **Redux DevTools Extension:**
+    *   **MUST** wrap the store creator with the `devtools` middleware from `zustand/middleware`. (Reference: [Zustand Devtools Middleware](https://zustand.docs.pmnd.rs/middlewares/devtools))
+    *   Provide a unique `name` in the `devtools` options for easy identification.
+    *   Use the Redux DevTools browser extension to inspect state changes, action history, and time-travel debug. This is invaluable for understanding state flow.
+
+2.  **Console Logging:**
+    *   Use `console.log` strategically *within actions* in the store or within async functions (like the generator) *before* calling actions, to trace logic flow and data changes. Avoid excessive logging directly in component render bodies.
+
+3.  **React DevTools:**
+    *   Continue using React DevTools to inspect component props and identify which components are re-rendering, especially when optimizing selector usage.
+
+## FINAL DOs AND DON'Ts
+
+**DOs:**
+
+*   **DO** use a single Zustand store initially for WhyBot's global state.
+*   **DO** define clear TypeScript interfaces for your store state and actions.
+*   **DO** colocate state and actions within the `create` function.
+*   **DO** use the `immer` middleware to simplify immutable updates, especially for `qaTree`.
+*   **DO** use selectors (`useStore(state => state.someSlice)`) in components.
+*   **DO** use `useShallow` when selecting multiple state slices or objects/arrays to prevent unnecessary re-renders.
+*   **DO** use the `devtools` middleware for enhanced debugging capabilities.
+*   **DO** keep asynchronous logic (like the generator) separate initially, calling synchronous store actions to update state.
+*   **DO** remove the old `ref` + `structuredClone` pattern from `GraphPage.tsx`.
+
+**DON'Ts:**
+
+*   **DON'T** mutate state directly outside the `set` function (especially when using `immer`).
+*   **DON'T** forget `useShallow` when selecting objects or multiple values – this is a common performance pitfall.
+*   **DON'T** define multiple stores for closely related global state unnecessarily; start with one.
+*   **DON'T** omit the `devtools` middleware; it's crucial for debugging.
+*   **DON'T** skip defining TypeScript types for the store.
+*   **DON'T** continue using the `qaTreeRef.current = ...; setResultTree(structuredClone(...))` pattern.

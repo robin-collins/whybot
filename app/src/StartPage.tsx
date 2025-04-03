@@ -4,7 +4,7 @@ import "./index.css";
 import { PaperAirplaneIcon, InformationCircleIcon } from "@heroicons/react/24/outline";
 import classNames from "classnames";
 import TextareaAutosize from "react-textarea-autosize";
-import { QATree } from "./GraphPage";
+import { QATree } from "./types";
 import { PERSONAS } from "./personas";
 import { useQuery } from "@tanstack/react-query";
 import { getFingerprint } from "./main";
@@ -53,7 +53,7 @@ function StartPage(props: {
         promptsRemainingQuery.refetch();
     }, [props.model]);
 
-    console.log("prompts remaining", promptsRemainingQuery);
+    // console.log("prompts remaining", promptsRemainingQuery);
     const promptsRemaining =
         promptsRemainingQuery.isLoading || promptsRemainingQuery.error ? "?" : promptsRemainingQuery.data.remaining;
     const disableEverything = promptsRemaining === 0 && !props.apiKey.valid;
@@ -224,8 +224,16 @@ function StartPage(props: {
                                         model: "gpt-4o-mini",
                                         apiKey: props.apiKey.key,
                                         temperature: 1,
+                                        nodeId: "random-question-node",
                                         onChunk: (chunk) => {
-                                            setQuery((old) => (old + chunk).trim());
+                                            try {
+                                                const parsed = JSON.parse(chunk);
+                                                if (parsed.type === "chunk" && parsed.content) {
+                                                    setQuery((old) => old + parsed.content);
+                                                }
+                                            } catch (e) {
+                                                console.error("Error parsing random question chunk:", e);
+                                            }
                                         },
                                     });
                                     setRandomQuestionLoading(false);

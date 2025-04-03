@@ -12,6 +12,7 @@ import ReactFlow, {
   useEdgesState,
   useNodesState,
   useReactFlow,
+  OnConnectStartParams,
 } from "reactflow";
 import dagre from "dagre";
 
@@ -46,43 +47,58 @@ const layoutElements = (
   const dagreGraph = new dagre.graphlib.Graph();
   dagreGraph.setDefaultEdgeLabel(() => ({}));
 
+  // Filter nodes: Only include q-0 initially, or nodes with dimensions
+  // const nodesToLayout = nodes.filter(node =>
+  //   node.id === 'q-0' || node.id in nodeDims
+  // );
+  // Filter edges: Only include edges connecting nodes that are being laid out
+  // const nodeIdsToLayout = new Set(nodesToLayout.map(n => n.id));
+  // const edgesToLayout = edges.filter(edge =>
+  //     nodeIdsToLayout.has(edge.source) && nodeIdsToLayout.has(edge.target)
+  // );
+
   const nodeWidth = 250;
   const nodeHeight = 170;
   dagreGraph.setGraph({ rankdir: direction, nodesep: 100 });
 
+  // Use all nodes passed in
   nodes.forEach((node) => {
     if (node.id in nodeDims) {
       dagreGraph.setNode(node.id, {
         width: nodeDims[node.id]["width"],
         height: nodeDims[node.id]["height"],
       });
-    } else {
+    } else { // Use defaults if dims not available
       dagreGraph.setNode(node.id, { width: nodeWidth, height: nodeHeight });
     }
   });
 
+  // Use all edges passed in
   edges.forEach((edge) => {
     dagreGraph.setEdge(edge.source, edge.target);
   });
 
   dagre.layout(dagreGraph);
 
+  // Map positions back to the original nodes array
   nodes.forEach((node) => {
+    // Check if the node was actually processed by Dagre (it might not be if disconnected)
     const nodeWithPosition = dagreGraph.node(node.id);
-    node.targetPosition = isHorizontal ? Position.Left : Position.Top;
-    node.sourcePosition = isHorizontal ? Position.Right : Position.Bottom;
+    if (nodeWithPosition) {
+      node.targetPosition = isHorizontal ? Position.Left : Position.Top;
+      node.sourcePosition = isHorizontal ? Position.Right : Position.Bottom;
 
-    // We are shifting the dagre node position (anchor=center center) to the top left
-    // so it matches the React Flow node anchor point (top left).
-    // Use the actual node dimensions from dagre for the offset calculation
-    node.position = {
-      x: nodeWithPosition.x - nodeWithPosition.width / 2 + 60,
-      y: nodeWithPosition.y - nodeWithPosition.height / 2 + 60,
-    };
-
-    return node;
+      node.position = {
+        x: nodeWithPosition.x - (nodeWithPosition.width / 2) + 60,
+        y: nodeWithPosition.y - (nodeWithPosition.height / 2) + 60,
+      };
+    } else {
+      // Assign a default position if Dagre didn't handle it? Or leave as is?
+      // console.warn(`Node ${node.id} was not laid out by Dagre.`);
+    }
   });
 
+  // Return original nodes/edges with updated positions
   return { nodes, edges };
 };
 
@@ -175,55 +191,103 @@ export const openai_server = async (
     model: string;
     temperature: number;
     onChunk: (chunk: string) => void;
+    nodeId: string;
   }
 ) => {
   const fingerprint = await getFingerprint();
-  return new Promise((resolve, reject) => {
+  let ws: WebSocket | null = null;
+  let isAborted = false;
+
+  const promise = new Promise<void>((resolve, reject) => {
     if (opts.temperature < 0 || opts.temperature > 1) {
-      console.error(
-        `Temperature is set to an invalid value: ${opts.temperature}`
-      );
+      const errorMsg = `Temperature is set to an invalid value: ${opts.temperature}`;
+      console.error(errorMsg);
+      reject(new Error(errorMsg));
       return;
     }
-    // Establish a WebSocket connection to the server
-    const ws = new WebSocket(`${SERVER_HOST_WS}/ws?fp=${fingerprint}`);
-    // Send a message to the server to start streaming
+
+    try {
+        ws = new WebSocket(`${SERVER_HOST_WS}/ws?fp=${fingerprint}`);
+    } catch (error) {
+        console.error("Failed to create WebSocket:", error);
+        reject(error);
+        return;
+    }
+
+    // Create an abort controller for cleanup
+    const cleanup = () => {
+      if (ws && ws.readyState < 2) { // 0 = CONNECTING, 1 = OPEN
+        isAborted = true;
+        console.log(`Manually closing WebSocket for node ${opts.nodeId} during cleanup`);
+        ws.close(1000, "Client cleanup"); // Use 1000 (normal closure) code
+      }
+    };
+
     ws.onopen = () => {
-      ws.send(
+      console.log(`WebSocket opened for node ${opts.nodeId}`);
+      if (isAborted) {
+        console.log(`Connection opened but marked as aborted for node ${opts.nodeId}, closing immediately`);
+        ws?.close(1000, "Aborted after open");
+        return;
+      }
+
+      ws?.send(
         JSON.stringify({
           prompt,
           model: opts.model,
           temperature: opts.temperature,
+          nodeId: opts.nodeId,
         })
       );
     };
-    // Listen for streaming data from the server
+
     ws.onmessage = (event) => {
+      if (isAborted) return; // Skip processing if aborted
+
       const message = event.data;
-      // Check if the stream has ended
-      if (message === "[DONE]") {
-        console.log("Stream has ended");
-        resolve(message);
-        ws.close();
+      opts.onChunk(message);
+    };
+
+    ws.onerror = (event) => {
+      if (isAborted) {
+        console.log(`Ignoring WebSocket error for aborted connection (node ${opts.nodeId})`);
+        return;
+      }
+
+      const error = event instanceof ErrorEvent ? event.message : 'WebSocket error occurred';
+      console.error(`WebSocket error for node ${opts.nodeId}:`, error);
+      reject(new Error(error || 'WebSocket error'));
+    };
+
+    ws.onclose = (event) => {
+      console.log(`WebSocket closed for node ${opts.nodeId}. Code: ${event.code}, Reason: ${event.reason}, Clean: ${event.wasClean}`);
+
+      if (isAborted) {
+        console.log(`WebSocket was aborted for node ${opts.nodeId}, resolving promise`);
+        resolve();
+        return;
+      }
+
+      if (event.wasClean) {
+         resolve();
       } else {
-        // Handle streaming data
-        // console.log("Received data:", message);
-        // Send data to be displayed
-        opts.onChunk(message);
+         reject(new Error(`WebSocket closed uncleanly. Code: ${event.code}, Reason: ${event.reason}`));
       }
     };
 
-    // Handle the WebSocket "error" event
-    ws.onerror = (error) => {
-      console.error("WebSocket error:", error);
-      reject(error);
-    };
-
-    // Handle the WebSocket "close" event
-    ws.onclose = (event) => {
-      console.log("WebSocket connection closed:", event);
-    };
+    // Attach cleanup method to the promise for caller to invoke during unmount
   });
+
+  // Add cleanup method to promise
+  (promise as any).cleanup = () => {
+    if (ws && ws.readyState < 2) {
+      isAborted = true;
+      console.log(`Cleanup called externally for WebSocket (node ${opts.nodeId})`);
+      ws.close(1000, "External cleanup");
+    }
+  };
+
+  return promise;
 };
 
 // Function to get streaming openai completion
@@ -234,6 +298,7 @@ export const openai = async (
     model: string;
     temperature: number;
     onChunk: (chunk: string) => void;
+    nodeId: string;
   }
 ) => {
   if (opts.apiKey) {
@@ -249,14 +314,38 @@ export const openai = async (
     model: opts.model,
     temperature: opts.temperature,
     onChunk: opts.onChunk,
+    nodeId: opts.nodeId,
   });
 };
+
+// Explicitly cast the function to match the window.openai type
+const windowOpenAI = ((prompt: string, opts: {
+  apiKey?: string;
+  model: string;
+  temperature: number;
+  nodeId?: string;
+  onChunk: (chunk: string) => void;
+}) => {
+  // Ensure nodeId is present for server calls
+  if (!opts.nodeId) {
+    console.warn("No nodeId provided for openai call, using fallback");
+    opts.nodeId = "fallback-" + Math.random().toString(36).substring(2, 9);
+  }
+  return openai(prompt, opts as any);
+}) as Window["openai"];
+
+// Assign the openai function to window at initialization
+if (typeof window !== 'undefined') {
+  window.openai = windowOpenAI;
+}
 
 type FlowProps = {
   flowNodes: Node[];
   flowEdges: Edge[];
   nodeDims: NodeDims;
   deleteBranch: (id: string) => void;
+  onConnectStart: (event: React.MouseEvent | React.TouchEvent, params: OnConnectStartParams) => void;
+  onConnectEnd: (event: MouseEvent | TouchEvent) => void;
 };
 export const Flow: React.FC<FlowProps> = (props) => {
   const [nodes, setNodes, onNodesChangeDefault] = useNodesState<Node[]>(
@@ -322,11 +411,8 @@ export const Flow: React.FC<FlowProps> = (props) => {
 
 
   const handleCenterFirst = useCallback(() => {
-    // Assuming the first question node ID follows the pattern 'q-...' and starts from 'q-0' or similar lowest number.
-    // A more robust way might involve sorting nodes or checking for a specific 'isInitial' flag if available.
-    const allNodes = getNodes();
-    const firstQNode = allNodes.find(n => n.id.startsWith('q-') && !n.data?.parent); // Simple check for a root question node
-    handleCenterNode(firstQNode?.id ?? null);
+    // The initial seed question node consistently has the ID 'q-0'
+    handleCenterNode('q-0');
   }, [getNodes, handleCenterNode]);
 
   const handleCenterLast = useCallback(() => {
@@ -373,6 +459,8 @@ export const Flow: React.FC<FlowProps> = (props) => {
         onNodesChange={onNodesChangeDefault}
         onEdgesChange={onEdgesChangeDefault}
         panOnScroll
+        onConnectStart={props.onConnectStart}
+        onConnectEnd={props.onConnectEnd}
         minZoom={minZoomSlider}
         maxZoom={maxZoomSlider}
         onMoveEnd={(_event, viewport) => setCurrentZoom(viewport.zoom)}
@@ -418,16 +506,23 @@ export const Flow: React.FC<FlowProps> = (props) => {
   );
 };
 
-type FlowProviderProps = {
-  flowNodes: Node[];
-  flowEdges: Edge[];
-  nodeDims: NodeDims;
-  deleteBranch: (id: string) => void;
-};
+interface FlowProviderProps extends FlowProps {
+  // Inherit all props from FlowProps including the handlers
+  // No additional props needed for FlowProvider itself currently
+}
+
 export const FlowProvider: React.FC<FlowProviderProps> = (props) => {
   return (
     <ReactFlowProvider>
-      <Flow {...props} />
+      {/* Pass all received props, including handlers, down to Flow */}
+      <Flow
+        flowNodes={props.flowNodes}
+        flowEdges={props.flowEdges}
+        nodeDims={props.nodeDims}
+        deleteBranch={props.deleteBranch}
+        onConnectStart={props.onConnectStart}
+        onConnectEnd={props.onConnectEnd}
+      />
     </ReactFlowProvider>
   );
 };

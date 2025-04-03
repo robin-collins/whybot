@@ -1,6 +1,7 @@
 import express from "express";
 import { rateLimit, MemoryStore } from "express-rate-limit";
 import OpenAI from "openai";
+import { ChatCompletionCreateParamsStreaming } from "openai/resources/chat/completions";
 import WebSocket from "ws";
 import cors from "cors";
 import { config } from "dotenv";
@@ -34,15 +35,14 @@ logEnvVar(process.env.FIREBASE_PRIVATE_KEY, "FIREBASE_PRIVATE_KEY");
 logEnvVar(process.env.OPENAI_API_KEY, "OPENAI_API_KEY");
 logEnvVar(process.env.MAX_TOKENS, "MAX_TOKENS");
 
+// Check for GOOGLE_APPLICATION_CREDENTIALS which is needed for applicationDefault()
+logEnvVar(process.env.GOOGLE_APPLICATION_CREDENTIALS, "GOOGLE_APPLICATION_CREDENTIALS");
+
 initializeApp({
-  credential: credential.cert({
-    projectId: process.env.FIREBASE_PROJECT_ID,
-    // privateKey: process.env.FIREBASE_PRIVATE_KEY,
-    privateKey: process.env.FIREBASE_PRIVATE_KEY
-      ? process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, "\n")
-      : undefined,
-    clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-  }),
+  // Use application default credentials.
+  // This automatically looks for the GOOGLE_APPLICATION_CREDENTIALS environment variable
+  // pointing to your service account key file, or other standard credential sources.
+  credential: credential.applicationDefault(),
 });
 
 const MAX_TOKENS = parseInt(process.env.MAX_TOKENS ?? "4096");
@@ -104,6 +104,9 @@ wss.on("connection", (ws) => {
       // Parse the message from the client
       const data = JSON.parse(message.toString());
 
+      // Assuming data has a unique identifier like nodeId
+      const nodeId = data.nodeId; // Adjust if the identifier has a different name
+
       try {
         const documentRef = await db
           .collection("completions")
@@ -113,41 +116,59 @@ wss.on("connection", (ws) => {
         console.error("Error while adding document:", error);
       }
 
-      console.log("data", data);
+      // console.log("Sending the following data to the OpenAI API:", data);
+
+
+
+      const oai_request_json: ChatCompletionCreateParamsStreaming = {
+        model: data.model,
+        stream: true,
+        messages: [
+          {
+            role: "system",
+            content:
+              "You are a helpful assistant who always responds in English. Respond without any preamble, explanation, confirmation or commentary, just the final answer. Respond in markdown format if requested and make use of ## Headers, *italics*, **bold**, and lists as well as emoticons to make the answer more engaging. If requested to respond in JSON, only respond in JSON format, do not enclose it in ```json tags.",
+          },
+          { role: "user", content: data.prompt },
+        ],
+        max_tokens: MAX_TOKENS,
+        temperature: data.temperature,
+        n: 1,
+      };
 
       // Call the OpenAI API and wait for the response
-      const stream = await openai.chat.completions.create(
-        {
-          model: data.model,
-          stream: true,
-          messages: [
-            {
-              role: "system",
-              content:
-                "You are a helpful assistant who always responds in English. Respond without any preamble, explanation, confirmation or commentary, just the final answer. Respond in markdown format if requested and make use of ## Headers, *italics*, **bold**, and lists as well as emoticons to make the answer more engaging. If requested to respond in JSON, only respond in JSON format, do not enclose it in ```json tags.",
-            },
-            { role: "user", content: data.prompt },
-          ],
-          max_tokens: MAX_TOKENS,
-          temperature: data.temperature,
-          n: 1,
-        }
-      );
+      const stream = await openai.chat.completions.create(oai_request_json);
+
+      let oai_response_json = "";
 
       // Process the stream using async iteration
       for await (const part of stream) {
         const completion = part.choices[0]?.delta?.content;
         if (completion != null) {
-          ws.send(completion);
+          oai_response_json += completion;
+          // Send chunk with nodeId
+          ws.send(JSON.stringify({ type: 'chunk', nodeId, content: completion }));
         }
       }
-      console.log("Stream finished processing.");
-      ws.send("[DONE]");
+      console.log("OA Response Stream finished.");
+      console.log("----------------------------------------------------------------");
+      console.log(oai_response_json);
+      console.log("----------------------------------------------------------------");
+      // Send done signal with nodeId
+      ws.send(JSON.stringify({ type: 'done', nodeId }));
 
     } catch (error: any) {
       // Handle any errors that occur during the API call
       console.error("Error during WebSocket message processing:", error);
-      ws.send(`[ERROR] ${error?.message || error}`);
+      // Send error signal with nodeId
+      const nodeId = (() => {
+        try {
+          return JSON.parse(message.toString()).nodeId;
+        } catch {
+          return null; // Or some default/error identifier
+        }
+      })();
+      ws.send(JSON.stringify({ type: 'error', nodeId, message: error?.message || String(error) }));
       // Consider closing the connection on significant errors
       // ws.close();
     }
