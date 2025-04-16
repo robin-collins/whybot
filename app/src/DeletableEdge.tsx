@@ -1,22 +1,15 @@
 import { getBezierPath } from "reactflow";
 import "./DeletableEdge.css";
+import { useState } from "react";
 
-const onEdgeClick = (
-  evt: any,
+const requestEdgeDeletion = (
+  evt: React.MouseEvent,
   id: string,
-  deleteBranch: (id: string) => void
+  requestDeleteBranch: (edgeId: string) => void
 ) => {
   evt.stopPropagation();
-  console.log(`remove ${id}`);
-  const qaNodeIDs = id.split("-");
-  console.log("remove", qaNodeIDs);
-  if (qaNodeIDs[0] == "a") {
-    console.log("remove", qaNodeIDs[3]);
-    deleteBranch(qaNodeIDs[3]);
-  } else if (qaNodeIDs[0] == "q") {
-    console.log("remove", qaNodeIDs[1]);
-    deleteBranch(qaNodeIDs[1]);
-  }
+  console.log(`Requesting deletion for edge ${id}`);
+  requestDeleteBranch(id);
 };
 
 type DeletableEdgeProps = {
@@ -26,9 +19,11 @@ type DeletableEdgeProps = {
   targetX: number;
   targetY: number;
   sourcePosition: any;
-  style: any;
+  style?: any;
   targetPosition: any;
-  data: any;
+  data?: {
+    requestDeleteBranch: (edgeId: string) => void;
+  };
 };
 
 export function DeletableEdge({
@@ -69,9 +64,9 @@ export function DeletableEdge({
             <polyline
               id={`${id}-poly`}
               stroke="#b1b1b7"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              stroke-width="1"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth="1"
               fill="none"
               points="-5,-4 0,0 -5,4"
             ></polyline>
@@ -84,8 +79,11 @@ export function DeletableEdge({
           d={edgePath}
           markerEnd={`url(#${id}-marker)`}
           onClick={(event) => {
-            onEdgeClick(event, id, data.deleteBranch);
-            console.log("clicked path");
+            if (data?.requestDeleteBranch) {
+              requestEdgeDeletion(event, id, data.requestDeleteBranch);
+            } else {
+              console.log("requestDeleteBranch not provided to edge", id);
+            }
           }}
         />
         <path
@@ -94,8 +92,11 @@ export function DeletableEdge({
           className="fat-path"
           d={edgePath}
           onClick={(event) => {
-            onEdgeClick(event, id, data.deleteBranch);
-            console.log("clicked fat path");
+            if (data?.requestDeleteBranch) {
+              requestEdgeDeletion(event, id, data.requestDeleteBranch);
+            } else {
+              console.log("requestDeleteBranch not provided to edge", id);
+            }
           }}
         />
       </g>

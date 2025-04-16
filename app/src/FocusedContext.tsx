@@ -1,6 +1,6 @@
 import { createContext, useContext, useState } from "react";
 import { ReactNode } from "react";
-import { QATree } from "./GraphPage";
+import { QATree } from "./types";
 
 export function isChild(
   qaTree: QATree,
