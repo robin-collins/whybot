@@ -1,0 +1,147 @@
+
+## PROJECT OVERVIEW
+
+This project aims to build a knowledge graph exploration tool using a combination of React, Cytoscape.js, and OpenAI's API.  The application allows users to input a question, explore related concepts, and generate a visual graph representation of their knowledge exploration.  The application incorporates various features such as graph persistence, export/import functionalities, and a user-friendly interface. Version 1.0.0 of the graph export format is currently implemented.
+
+
+## CODE STYLE
+
+- Adhere to standard JavaScript/TypeScript coding conventions.
+- Maintain consistent indentation (2 spaces).
+- Use descriptive variable and function names.
+- Follow the Prettier code formatting rules defined in .prettierrc.
+- Utilize ESLint for linting and code quality checks, as defined in .eslintrc.json.  The `app/eslint.config.js` file should be updated as described in 2025-04-03_06-24-identifying-project-module-types.md.  The `lint` and `lint:fix` scripts in `app/package.json` should be updated to remove the `--ext` and `--report-unused-disable-directives` flags.
+- Code should be properly formatted, linted, and successfully built before execution.
+- Add `lint:fix` and `format` scripts to `app/package.json` as described in 2025-04-03_06-21-adding-lint-and-format-scripts.md
+
+
+## FOLDER ORGANIZATION
+
+The project uses a structured folder organization to enhance maintainability and scalability:
+
+- `/app`: Frontend application code.
+    - `/src`: Source code.
+        - `/components`: Reusable UI components (e.g., NodeGraph, QuestionNode, DataNode, NodeToolbar, EditableText, UIControls, APIKeyModal, UserQuestionNode, UserFileNode, WebPageNode, InteractiveNode).
+        - `/pages`: Page-specific components (e.g., AboutPage, HomePage, GraphPage).
+        - `/hooks`: Custom React hooks (e.g., useGraphPersistence).
+        - `/types`: Type definitions (e.g., GraphTypes, WebSocketTypes, UserNodeType).
+        - `/services`: Data fetching and interaction logic (e.g., websocket).
+        - `/utils`: Utility functions (e.g., graphExport, graphImport, convertTreeToFlow).
+        - `/models`: Models and their configurations.
+        - `/personas`: Personas and their prompts.
+        - `/store`: Zustand store files (e.g., appStore.ts)
+    - `/public`: Static assets.
+- `/server`: Backend server code.
+    - `/routes`: API route handlers.
+    - `/examples`: Example data for the application.
+    - `/logs`: Directory for storing server logs.
+- `/types`: Type definitions for the project.
+
+
+## TECH STACK
+
+- Frontend: React, React Router, TypeScript, Cytoscape.js, react-textarea-autosize, react-markdown, framer-motion, localforage, classnames, remark-gfm, @tailwindcss/typography, react-flow, @heroicons/react/24/solid, @headlessui/react, Puppeteer, readability, zustand, immer, react-use-measure, zustand/react/shallow
+- Backend: Node.js, Express.js, Firebase, OpenAI API, ws, puppeteer, @mozilla/readability, turndown, jsdom, concurrently
+- Testing: (To be defined)
+- Backend Added Packages: puppeteer, @mozilla/readability, turndown, @types/turndown, openai (updated to v4+), firebase-admin (updated)
+- Backend Added Packages: puppeteer, @mozilla/readability, turndown, @types/turndown
+
+
+## PROJECT-SPECIFIC STANDARDS
+
+- All new components should follow the established folder structure and naming conventions.
+- Error handling should be robust and informative, providing clear messages to the user.
+- The application should be designed for scalability and maintainability.
+- The WebSocket service should handle reconnections and provide feedback to the user on connection status.
+- The graph data should be persisted locally using localStorage for session persistence.
+- The graph data should be exportable in JSON, SVG, and PNG formats.
+- **New Node Generation Behavior:** All node generation is now user-driven through explicit button clicks.
+- **Answer Node Rendering:** Answer nodes now render text using `react-markdown` with `remark-gfm` support for GitHub Flavored Markdown.  Full text display is enabled for answer nodes, removing previous truncation limitations. Answer nodes have a light green border and a 3px thick border. Changes are reflected in `app/src/FadeoutTextNode.tsx` and `app/src/fadeout-text.css`.
+- **Question Node and Button Improvements:** Question nodes are now sized to prevent the "Answer" button from overlapping the question text. The button text changes to "Answering..." and turns green while the answer is being generated.  The button disappears after the answer node is created. Changes are reflected in `app/src/GraphPage.tsx` and `app/src/FadeoutTextNode.tsx`.
+- **Answer Node Expansion:** If the answer text exceeds 1500 characters, the node's width animates from its initial size to 150% when expanded. The height adjusts to fit the content.
+- **Answer Node Markdown Rendering and Expansion:** If the answer text exceeds 1500 characters, the node's width animates from its initial size (250px) to 150% (375px) when expanded. The height adjusts to fit the content. Markdown headers now render correctly with appropriate styling.
+- **TailwindCSS Typography Plugin:** Ensure `@tailwindcss/typography` is installed and configured in `tailwind.config.js` for proper Markdown styling and header rendering.  The `prose` class should be used for markdown rendering.  Additional styling may be required to remove excess padding.
+- **Answer Node Expansion and Child Node Positioning:** When an answer node expands due to long content, the layout algorithm should recalculate the positions of newly generated child question nodes using the expanded dimensions of the parent answer node.
+- **Answer Node Scrolling:** If the answer text exceeds a certain height after expansion, a vertical scrollbar should appear within the node to allow scrolling of the content. The maximum expanded height should be limited to 99% of the browser viewport height.
+- **List Item Spacing:** To reduce excessive spacing around list items, use `prose-li:my-1`.  Additional styling `[&_ul]:mt-[0.25em] [&_ol]:mt-[0.25em]` was added to reduce top margin on nested lists.
+- **Layout Optimization:** To improve the layout performance and address issues with nodes not being rendered initially, the layout function in `Flow.tsx` now filters nodes to include only those with available dimensions or the initial question nodes.
+- **Layout Timing and Node Filtering:**  The layout function in `app/src/Flow.tsx` was updated to filter nodes, including only those with available dimensions in `nodeDims` or the initial question nodes (`q-0`).
+- **Awaiting Dimension Updates:** To reliably ensure the layout uses updated dimensions, a small delay (`setTimeout`) was added within `generateAnswerForNode` in `app/src/GraphPage.tsx`.
+- **Stricter Layout Filtering:** To address the issue of subsequent answer nodes not rendering, a stricter filtering approach was implemented in `Flow.tsx`.
+- **Layout Function and Dimension Handling:** The layout function (`layoutElements` in `Flow.tsx`) now handles cases where node dimensions are not immediately available in `props.nodeDims`.
+- **Awaiting Dimension Updates (Final Solution):**  The issue with subsequent answer nodes not rendering correctly was ultimately resolved by using a refined filtering strategy in `Flow.tsx`.
+- **Canvas Controls:** The `Flow.tsx` component has been updated to include canvas controls such as centering on the first/last node, zoom in/out, and reset zoom functionality.
+- **Node Link Severing:** Implement functionality to sever a node linking line when hovering over it with a "scissors" cursor. Severing the link should delete all downstream nodes connected to that link.
+- **Cascade Delete:** Implement a cascade delete feature triggered by hovering over a link with a "scissors" cursor.  Severing the link deletes all downstream nodes.
+- **User Node Types:** Three new user node types have been defined:
+    - **User-Entered Question Node:** Allows users to input their own questions, mirroring the functionality of LLM-generated question nodes.
+    - **User-Submitted File Node:** Enables users to upload text files (any extension, content must be text).
+    - **Web Page Content Node:** Allows users to input a URL.
+- **Interactive Node Component:** A new universal node component (`InteractiveNode.tsx`) will be created to handle the rendering and logic for all user node types.
+- Backend API endpoints added: `/api/fetch-webpage`
+- **LLM Prompt Context:** The LLM prompt generation logic now includes context from ancestor `user-file` and `user-webpage` nodes to enrich the generated answers.
+- **Firebase Credential Handling:** To resolve the "Getting metadata from plugin failed with error: error:1E08010C:DECODER routines::unsupported" error, the Firebase initialization in `server/server.ts` now uses `credential.applicationDefault()`.
+- **OpenAI API Call Handling:**  The JSON input supplied to `openai.chat.completions.create()` should be stored in a variable called `oai_request_json`. The reconstructed resultant stream should be stored in a variable called `oai_response_json`.
+- **WebSocket Message Handling:** To resolve issues with concurrent WebSocket requests and garbled messages, the server-side WebSocket message handler in `server/server.ts` has been modified to send JSON messages including a `nodeId` to identify the request.
+- **WebSocket Communication Protocol (WCP) Update:**  A new WebSocket communication protocol has been implemented to address issues with concurrent requests and message garbling.  The frontend should send a disconnect message to the server when the user navigates away from the graph page to prevent runaway generation loops. The server should handle this message gracefully and clear its internal state for that client. The frontend should handle WebSocket messages explicitly, resolving promises based on 'done' or 'error' messages.
+- **MultiNodeGenerator and NodeGeneratorOpts Updates:** The `MultiNodeGenerator` now includes a `processingNodes` set to track nodes currently being processed, preventing duplicate processing of the same node.
+- **TypeScript Configuration:** The `tsconfig.json` file has been updated to resolve TypeScript compiler errors.
+- **TypeScript Configuration Update (2025-04-03):** The `tsconfig.json` file has been further updated to resolve remaining TypeScript compiler errors.
+- **tsconfig.json Update:**  The `"moduleResolution"` setting should be `"node"`, `"allowSyntheticDefaultImports"` should be `true`, and `"esModuleInterop"` should be `true`.
+- **State Management Refactoring:** Refactor state management to use Zustand for improved clarity and efficiency.
+- **Zustand Store Implementation:** The Zustand store has been implemented in `app/src/store/appStore.ts`.
+- **Module Type:** The project uses JavaScript modules (import/export), as indicated by `"type": "module"` in `package.json`.
+- **Framework:** The project uses React, as indicated by the presence of `"react"` and `"react-dom"` in `app/package.json`.
+- The application runs in both the browser and Node.js environments.
+- **Error Handling:** Implement a custom error boundary component to handle the "Maximum update depth exceeded" error.
+- **Zustand `useShallow` Hook:** To address the "Maximum update depth exceeded" error, the `useShallow` hook from `zustand/react/shallow` should be used when selecting multiple state slices and actions from the Zustand store.
+- **API Key Persistence and GraphPage Initialization:** To resolve the issue where the API key is not correctly retrieved in `GraphPage`, ensure that the `persist` middleware in the Zustand store is correctly configured and that the store is fully rehydrated before `generateAnswerForNode` is called.
+- **Error Handling for Node Graph:** Implement comprehensive error handling to catch and display informative error messages to the user, especially during node processing.
+- **Persona State Management:** To resolve the "persona undefined" error, refactor `App.tsx` and `StartPage.tsx` to use the Zustand store as the single source of truth for the `model` and `persona` state.
+- **Generator Loop and Answer Node Creation:** The `generatorLoop` function in `GraphPage.tsx` needs to be refactored to explicitly create the answer node (`a-0`) in the `qaTree` state before starting the OpenAI stream.
+- **Automatic Node Generation Removed:** The automatic generation of answer and question nodes has been removed.  All node generation is now user-driven through explicit button clicks.
+- **OpenAI v4+ Import and Instantiation:**  The `openai` library in the backend (`/server`) should be imported and instantiated according to the OpenAI v4+ specifications.
+- **Concurrent Process Termination:** To address the issue where only the app process is terminated when Ctrl+C is pressed while running `npm run dev`, the `dev` script in the root `package.json` has been updated to use the `concurrently` package. The updated script is: `"dev": "concurrently \"npm:start --workspace=server\" \"npm:dev --workspace=app\"",`
+- **Firestore Module Error:** To address the error `Error: Cannot find module './v1'`, reinstall the server dependencies by deleting the `node_modules` folder and `package-lock.json` in the `/server` directory, and then running `npm install`.
+- **WebSocket Protocol Update:** The WebSocket communication protocol has been updated to include `type` fields ('chunk', 'done', 'error') for more robust message handling. The frontend should handle these types explicitly to manage stream completion and errors.  The frontend should send a disconnect message to the server when the user navigates away from the graph page to prevent runaway generation loops.
+- The API key is now handled server-side; client-side API key handling has been removed.  The `persist` middleware in the Zustand store is correctly configured and the store is fully rehydrated before `generateAnswerForNode` is called.  The API key is handled server-side, so client-side API key handling has been removed.  Ensure that the `persist` middleware in the Zustand store is correctly configured and that the store is fully rehydrated before `generateAnswerForNode` is called. The API key is handled server-side, so client-side API key handling has been removed.  The initial seed question (`nodeId` '0') should generate its answer automatically. The `openai` function in `app/src/Flow.tsx` has been updated to accept and send the `nodeId`. The calls to `openai` in `app/src/GraphPage.tsx` have been updated to pass the correct `nodeId`. A fix was implemented to prevent the re-initialization of state and generator logic if node '0' processing has already been initiated.  The `MultiNodeGenerator` now includes a `processingNodes` set to track nodes currently being processed, preventing duplicate processing of the same node. The `NodeGeneratorOpts` type has been updated to include `processingNodes`. The `nodeGenerator` function now uses this set to claim and release node IDs, avoiding race conditions.  Use the `useShallow` hook from `zustand/react/shallow` when selecting multiple state slices and actions from the Zustand store to prevent unnecessary re-renders.  When a new seed question is submitted, the graph, and its entire state should be a clean start. The `initializeTree` action in the Zustand store should reset the relevant parts of the state before creating the new initial node. The frontend should send a disconnect message to the server when the user navigates away from the graph page. The server should handle this message gracefully and clear its internal state for that client. The frontend should handle WebSocket messages explicitly, resolving promises based on 'done' or 'error' messages. The `nodeDims` state in `GraphPage.tsx` should be a dependency of the `useMemo` hook to ensure the layout recalculates correctly whenever dimensions change. The actions needed in the callbacks should be accessed directly from the store via `useAppStore.getState().actionName()` to prevent unstable references. The persona dropdown in the sidebar should correctly display the selected persona, and the dropdowns should have a reasonable size to accommodate the text.  The `StartPage` should use the correct model key from the `MODELS` dictionary, without the `openai/` prefix, when making the initial API call to generate a random question.  The persona dropdown in the sidebar should correctly display the selected persona, and the dropdowns should have a reasonable size to accommodate the text.
+
+
+## WORKFLOW & RELEASE RULES
+
+- All code changes must be submitted through pull requests.
+- Pull requests must be reviewed by at least one other engineer.
+- The project will follow a semantic versioning scheme.
+- Before merging a PR, ensure all tests pass and the code is properly formatted and linted.
+
+
+## REFERENCE EXAMPLES
+
+- Refer to the documentation for details on the graph data format.  Version 1.0.0 is currently in use.
+- Refer to the API documentation for details on the endpoints.
+- Refer to the project's README for overall project information.
+
+
+## PROJECT DOCUMENTATION & CONTEXT SYSTEM
+
+- All code changes should be accompanied by relevant documentation updates.
+- Documentation should be generated automatically using JSDoc or similar tools.
+- The project uses a Markdown-based documentation system.  Updates should be recorded in the appropriate markdown files.
+
+
+## DEBUGGING
+
+- Utilize the browser's developer tools for debugging frontend issues.
+- Use a logging library (e.g., Winston) for debugging backend issues.
+- Add logging statements to track state changes and API calls.
+
+
+## FINAL DOs AND DON'Ts
+
+- Always ensure that the code is properly tested before merging into the main branch.
+- Never commit code that is not properly formatted or linted.
+- Always follow the established code style guidelines.
+- Always add relevant documentation when making code changes.
+- Never commit sensitive information (e.g., API keys) to version control.  Use environment variables.
+- When running multiple processes concurrently, use `concurrently` to ensure that all processes are terminated gracefully when Ctrl+C is pressed.  The updated `dev` script is: `"dev": "concurrently \"npm:start --workspace=server\" \"npm:dev --workspace=app\"",`
+- The `tsconfig.json` file should be configured with the following settings: `"moduleResolution": "node"`, `"allowSyntheticDefaultImports": true`, and `"esModuleInterop": true`. Add error handling to prevent accessing undefined properties. Add empty `export {}` statements to files that need to be treated as modules. Correct import paths. Ensure that functions correctly resolve promises. Add a new `/types` directory to the project structure and create `GraphTypes.ts` and `Examples.ts` files within it to define the necessary types. Add a `convertTreeToFlow.ts` file to the `/util` directory.  The API key is now handled server-side; client-side API key handling has been removed.  The `persist` middleware in the Zustand store is correctly configured and the store is fully rehydrated before `generateAnswerForNode` is called.  The API key is handled server-side, so client-side API key handling has been removed.  Ensure that the `persist` middleware in the Zustand store is correctly configured and that the store is fully rehydrated before `generateAnswerForNode` is called. The API key is handled server-side, so client-side API key handling has been removed.  The initial seed question (`nodeId` '0') should generate its answer automatically. The `openai` function in `app/src/Flow.tsx` has been updated to accept and send the `nodeId`. The calls to `openai` in `app/src/GraphPage.tsx` have been updated to pass the correct `nodeId`. A fix was implemented to prevent the re-initialization of state and generator logic if node '0' processing has already been initiated.  The `MultiNodeGenerator` now includes a `processingNodes` set to track nodes currently being processed, preventing duplicate processing of the same node. The `NodeGeneratorOpts` type has been updated to include `processingNodes`. The `nodeGenerator` function now uses this set to claim and release node IDs, avoiding race conditions.  Use the `useShallow` hook from `zustand/react/shallow` when selecting multiple state slices and actions from the Zustand store to prevent unnecessary re-renders.  When a new seed question is submitted, the graph, and its entire state should be a clean start. The `initializeTree` action in the Zustand store should reset the relevant parts of the state before creating the new initial node. The frontend should send a disconnect message to the server when the user navigates away from the graph page. The server should handle this message gracefully and clear its internal state for that client. The frontend should handle WebSocket messages explicitly, resolving promises based on 'done' or 'error' messages. The `nodeDims` state in `GraphPage.tsx` should be a dependency of the `useMemo` hook to ensure the layout recalculates correctly whenever dimensions change. The actions needed in the callbacks should be accessed directly from the store via `useAppStore.getState().actionName()` to prevent unstable references. The persona dropdown in the sidebar should correctly display the selected persona, and the dropdowns should have a reasonable size to accommodate the text.  The `StartPage` should use the correct model key from the `MODELS` dictionary, without the `openai/` prefix, when making the initial API call to generate a random question.  The `nodeDims` state in `GraphPage.tsx` should be a dependency of the `useMemo` hook to ensure the layout recalculates correctly whenever dimensions change.  The actions needed in the callbacks should be accessed directly from the store via `useAppStore.getState().actionName()` to prevent unstable references. The persona dropdown in the sidebar should correctly display the selected persona, and the dropdowns should have a reasonable size to accommodate the text. The persona dropdown in the sidebar should correctly display the selected persona, and the dropdowns should have a reasonable size to accommodate the text. The `StartPage` should use the correct model key from the `MODELS` dictionary, without the `openai/` prefix, when making the initial API call to generate a random question.  The `StartPage` should use the correct model key from the `MODELS` dictionary, without the `openai/` prefix, when making the initial API call to generate a random question. The `StartPage` persona dropdown should use the correct persona key from the `PERSONAS` dictionary.  The model and persona dropdowns should have a width of `w-48` and a padding of `py-3`.

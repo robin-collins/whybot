@@ -24,7 +24,7 @@ function Dropdown(props: {
             props.className
           )}
         >
-          <Listbox.Button className="relative w-full cursor-pointer rounded-md py-2 pl-3 pr-10 text-left shadow-sm text-sm border border-white/30 hover:border-white/40">
+          <Listbox.Button className="relative w-full cursor-pointer rounded-md py-3 pl-3 pr-10 text-left shadow-sm text-sm border border-white/30 hover:border-white/40">
             <span className="block truncate">
               {props.options.find((o) => o.value === props.value)?.name}
             </span>

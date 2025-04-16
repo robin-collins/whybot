@@ -23,6 +23,7 @@ type DeletableEdgeProps = {
   targetPosition: any;
   data?: {
     requestDeleteBranch: (edgeId: string) => void;
+    targetNodeId: string;
   };
 };
 
@@ -79,10 +80,10 @@ export function DeletableEdge({
           d={edgePath}
           markerEnd={`url(#${id}-marker)`}
           onClick={(event) => {
-            if (data?.requestDeleteBranch) {
-              requestEdgeDeletion(event, id, data.requestDeleteBranch);
+            if (data?.requestDeleteBranch && data?.targetNodeId) {
+              requestEdgeDeletion(event, data.targetNodeId, data.requestDeleteBranch);
             } else {
-              console.log("requestDeleteBranch not provided to edge", id);
+              console.log("requestDeleteBranch or targetNodeId not provided to edge", id);
             }
           }}
         />
@@ -92,10 +93,10 @@ export function DeletableEdge({
           className="fat-path"
           d={edgePath}
           onClick={(event) => {
-            if (data?.requestDeleteBranch) {
-              requestEdgeDeletion(event, id, data.requestDeleteBranch);
+            if (data?.requestDeleteBranch && data?.targetNodeId) {
+              requestEdgeDeletion(event, data.targetNodeId, data.requestDeleteBranch);
             } else {
-              console.log("requestDeleteBranch not provided to edge", id);
+              console.log("requestDeleteBranch or targetNodeId not provided to edge", id);
             }
           }}
         />

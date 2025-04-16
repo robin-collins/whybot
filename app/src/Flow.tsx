@@ -43,6 +43,7 @@ const layoutElements = (
   nodeDims: NodeDims,
   direction = "LR"
 ) => {
+  console.log("function layoutElements started");
   const isHorizontal = direction === "LR";
   const dagreGraph = new dagre.graphlib.Graph();
   dagreGraph.setDefaultEdgeLabel(() => ({}));
@@ -101,6 +102,8 @@ const layoutElements = (
 
   // Return original nodes/edges with updated positions
   return { nodes, edges };
+  console.log("function layoutElements finished");
+  return { nodes, edges };
 };
 
 export const openai_server = async (
@@ -112,6 +115,7 @@ export const openai_server = async (
     nodeId: string;
   }
 ) => {
+  console.log("function openai_server started");
   const fingerprint = await getFingerprint();
   let ws: WebSocket | null = null;
   let isAborted = false;
@@ -135,12 +139,11 @@ export const openai_server = async (
     // Create an abort controller for cleanup
     const cleanup = () => {
       if (ws && ws.readyState < 2) {
-        // 0 = CONNECTING, 1 = OPEN
         isAborted = true;
         console.log(
           `Manually closing WebSocket for node ${opts.nodeId} during cleanup`
         );
-        ws.close(1000, "Client cleanup"); // Use 1000 (normal closure) code
+        ws.close(1000, "Client cleanup");
       }
     };
 
@@ -151,6 +154,7 @@ export const openai_server = async (
           `Connection opened but marked as aborted for node ${opts.nodeId}, closing immediately`
         );
         ws?.close(1000, "Aborted after open");
+        reject(new Error("Connection aborted after open")); // Reject if aborted on open
         return;
       }
 
@@ -167,8 +171,36 @@ export const openai_server = async (
     ws.onmessage = (event) => {
       if (isAborted) return; // Skip processing if aborted
 
-      const message = event.data;
-      opts.onChunk(message);
+      try {
+        const message = JSON.parse(event.data);
+        // Ensure message has nodeId and type
+        if (message.nodeId !== opts.nodeId) {
+            // Ignore messages not for this specific stream request
+            return;
+        }
+
+        if (message.type === 'chunk') {
+            opts.onChunk(message.content); // Pass only content for chunks
+        } else if (message.type === 'done') {
+            console.log(`Stream completed via 'done' message for node ${opts.nodeId}`);
+            resolve(); // Resolve promise on 'done'
+            ws?.close(1000, "Stream completed"); // Close WS cleanly
+        } else if (message.type === 'error') {
+            const errorMsg = message.message || `Unknown stream error for node ${opts.nodeId}`;
+            console.error(`Stream error via 'error' message for node ${opts.nodeId}:`, errorMsg);
+            reject(new Error(errorMsg)); // Reject promise on 'error'
+            ws?.close(1001, "Stream error"); // Close WS indicating error
+        } else {
+             // Handle unexpected message types if necessary
+            console.warn(`Received unexpected message type: ${message.type} for node ${opts.nodeId}`);
+        }
+      } catch (e) {
+        console.error(`Error parsing WebSocket message for node ${opts.nodeId}:`, event.data, e);
+        // Don't reject here, wait for server error or timeout? Or reject?
+        // Let's reject for now if parsing fails during active stream
+        reject(new Error(`Failed to parse message: ${e}`));
+        ws?.close(1003, "Invalid message format");
+      }
     };
 
     ws.onerror = (event) => {
@@ -176,42 +208,32 @@ export const openai_server = async (
         console.log(
           `Ignoring WebSocket error for aborted connection (node ${opts.nodeId})`
         );
-        return;
+        return; // Don't reject if already aborted
       }
-
-      const error =
-        event instanceof ErrorEvent
-          ? event.message
-          : "WebSocket error occurred";
-      console.error(`WebSocket error for node ${opts.nodeId}:`, error);
-      reject(new Error(error || "WebSocket error"));
+      // This usually fires for connection issues *before* messages are handled
+      const error = event instanceof Event ? "WebSocket connection error" : String(event);
+      console.error(`WebSocket onerror for node ${opts.nodeId}:`, event); // Log the raw event
+      reject(new Error(error || "WebSocket connection error"));
+      // WS state might already be CLOSING or CLOSED here
     };
 
     ws.onclose = (event) => {
       console.log(
-        `WebSocket closed for node ${opts.nodeId}. Code: ${event.code}, Reason: ${event.reason}, Clean: ${event.wasClean}`
+        `WebSocket closed event for node ${opts.nodeId}. Code: ${event.code}, Reason: ${event.reason}, Clean: ${event.wasClean}`
       );
-
-      if (isAborted) {
-        console.log(
-          `WebSocket was aborted for node ${opts.nodeId}, resolving promise`
-        );
-        resolve();
-        return;
-      }
-
-      if (event.wasClean) {
-        resolve();
-      } else {
-        reject(
-          new Error(
-            `WebSocket closed uncleanly. Code: ${event.code}, Reason: ${event.reason}`
-          )
-        );
+      // If the promise hasn't already been resolved/rejected by onmessage ('done'/'error')
+      // then the closure was unexpected or due to an earlier onerror.
+      // We might reject here if it wasn't clean and wasn't aborted.
+      if (!isAborted && !event.wasClean) {
+          // Avoid rejecting if already resolved/rejected by 'done'/'error' message handling
+          // This requires tracking promise state, which is complex.
+          // Let's rely on 'done'/'error' messages for explicit completion/failure.
+          console.warn(`WebSocket for node ${opts.nodeId} closed uncleanly without explicit done/error message.`);
+          // Optionally reject here as a fallback if needed, e.g.:
+          // reject(new Error(`WebSocket closed unexpectedly. Code: ${event.code}`));
       }
     };
 
-    // Attach cleanup method to the promise for caller to invoke during unmount
   });
 
   // Add cleanup method to promise
@@ -225,6 +247,8 @@ export const openai_server = async (
     }
   };
 
+  return promise;
+  console.log("function openai_server finished");
   return promise;
 };
 
@@ -240,6 +264,7 @@ type FlowProps = {
   onConnectEnd: (event: MouseEvent | TouchEvent) => void;
 };
 export const Flow: React.FC<FlowProps> = (props) => {
+  console.log("function Flow started");
   const [nodes, setNodes, onNodesChangeDefault] = useNodesState<Node[]>(
     props.flowNodes
   );
@@ -427,6 +452,7 @@ export const Flow: React.FC<FlowProps> = (props) => {
       </div>
     </div>
   );
+  console.log("function Flow finished");
 };
 
 interface FlowProviderProps extends FlowProps {
@@ -435,6 +461,7 @@ interface FlowProviderProps extends FlowProps {
 }
 
 export const FlowProvider: React.FC<FlowProviderProps> = (props) => {
+  console.log("function FlowProvider started");
   return (
     <ReactFlowProvider>
       {/* Pass all received props, including handlers, down to Flow */}
@@ -448,6 +475,7 @@ export const FlowProvider: React.FC<FlowProviderProps> = (props) => {
       />
     </ReactFlowProvider>
   );
+  console.log("function FlowProvider finished");
 };
 
 // Global declaration (should be correct)

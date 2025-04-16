@@ -3,7 +3,7 @@ import { immer } from "zustand/middleware/immer";
 import { devtools, persist } from "zustand/middleware";
 import { QATree, QATreeNode } from "../types";
 import { MODELS } from "../models";
-import { Persona } from "../personas";
+import { Persona, PERSONAS } from "../personas";
 
 interface AppState {
   // Core State
@@ -67,8 +67,8 @@ export const useAppStore = create<AppState>()(
         qaTree: null,
         playing: true,
         focusedId: null,
-        model: Object.values(MODELS)[0].key,
-        persona: null,
+        model: "openai/gpt-4.1-mini",
+        persona: PERSONAS.researcher,
         isGenerating: false,
         error: null,
 
@@ -85,6 +85,7 @@ export const useAppStore = create<AppState>()(
             state.qaTree = { "q-0": rootNode };
             state.focusedId = null;
             state.error = null;
+            state.isGenerating = false;
             state.playing = true;
             if (initialPersona) {
               state.persona = initialPersona;
@@ -184,8 +185,23 @@ export const useAppStore = create<AppState>()(
         name: "whybot-storage",
         partialize: (state) => ({
           model: state.model,
-          persona: state.persona,
+          personaName: state.persona?.name ?? 'researcher',
         }),
+        onRehydrateStorage: () => (state, error) => {
+            if (error) {
+                console.error("Failed to rehydrate Zustand state:", error);
+                return;
+            }
+            if (state) {
+                const personaName = (state as any).personaName;
+                if (personaName && PERSONAS[personaName]) {
+                    state.persona = PERSONAS[personaName];
+                } else {
+                    state.persona = PERSONAS.researcher;
+                }
+                delete (state as any).personaName;
+            }
+        }
       }
     ),
     { name: "WhyBotAppStore" }

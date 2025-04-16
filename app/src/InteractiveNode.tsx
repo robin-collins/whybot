@@ -172,9 +172,26 @@ const getScaleFactor = (): number => {
 export interface InteractiveNodeData extends QATreeNode {
   nodeID: string; // Ensure nodeID is always present in data
   setNodeDims: React.Dispatch<React.SetStateAction<NodeDims>>;
+  currentDims: { width: number; height: number }; // Add currentDims prop
   onGenerateAnswer?: (nodeId: string) => void;
   isAnswering?: boolean;
 }
+
+// --- Modal for node type selection ---
+const NodeTypeModal = ({ open, onSelect, onClose }) => {
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+      <div className="bg-white rounded shadow-lg p-6 min-w-[220px] flex flex-col items-center">
+        <div className="mb-4 font-semibold">What type of node do you want to add?</div>
+        <button className="mb-2 w-full bg-blue-100 hover:bg-blue-200 text-blue-800 px-4 py-2 rounded" onClick={() => onSelect("user-question")}>Question</button>
+        <button className="mb-2 w-full bg-purple-100 hover:bg-purple-200 text-purple-800 px-4 py-2 rounded" onClick={() => onSelect("user-file")}>File</button>
+        <button className="w-full bg-orange-100 hover:bg-orange-200 text-orange-800 px-4 py-2 rounded" onClick={() => onSelect("user-webpage")}>URL</button>
+        <button className="mt-4 text-xs text-gray-500 hover:text-gray-700 underline" onClick={onClose}>Cancel</button>
+      </div>
+    </div>
+  );
+};
 
 export const InteractiveNode: React.FC<NodeProps<InteractiveNodeData>> = ({
   data,
@@ -191,6 +208,7 @@ export const InteractiveNode: React.FC<NodeProps<InteractiveNodeData>> = ({
     isLoading,
     errorMessage,
     setNodeDims: originalSetNodeDims, // Rename original prop
+    currentDims, // Destructure currentDims
     onGenerateAnswer,
     isAnswering,
   } = data;
@@ -210,6 +228,15 @@ export const InteractiveNode: React.FC<NodeProps<InteractiveNodeData>> = ({
   );
   const [localQuestion, setLocalQuestion] = useState(question);
   const [localUrl, setLocalUrl] = useState(url || "");
+  const [connectionPoint, setConnectionPoint] = useState<null | { edge: 'top' | 'right' | 'bottom' | 'left', x: number, y: number }>(null);
+  const [isDraggingConnection, setIsDraggingConnection] = useState(false);
+  const [dragPos, setDragPos] = useState<{ x: number; y: number } | null>(null);
+  const [showTypeModal, setShowTypeModal] = useState(false);
+  const [modalAt, setModalAt] = useState<{ x: number; y: number } | null>(null);
+  const [pendingConnection, setPendingConnection] = useState<null | { from: { x: number; y: number }, to: { x: number; y: number } }>(null);
+  const dragTimer = useRef<NodeJS.Timeout | null>(null);
+  const isMouseDown = useRef(false);
+  const nodeRef = useRef<HTMLDivElement>(null);
 
   // Create a stable reference to the original setNodeDims prop
   const setNodeDimsRef = useRef(originalSetNodeDims);
@@ -282,35 +309,45 @@ export const InteractiveNode: React.FC<NodeProps<InteractiveNodeData>> = ({
       const reportedHeight = Math.min(baseCalculatedHeight, maxNodeHeightPx);
       const reportedWidth = Math.max(currentWidth, targetWidth);
 
-      // Call the DEBOUNCED state setter
-      debouncedSetNodeDims((prev) => {
-        const oldDims = prev[nodeID];
-        if (
-          oldDims &&
-          Math.abs(oldDims.width - reportedWidth) < 1 &&
-          Math.abs(oldDims.height - reportedHeight) < 1
-        ) {
-          // If dimensions haven't changed meaningfully, return previous state to avoid update
-          return prev;
-        }
-        // Otherwise, return the new state object
-        return {
-          ...prev,
-          [nodeID]: { width: reportedWidth, height: reportedHeight },
-        };
-      });
+      // --- Check against currentDims before updating ---
+      const widthChanged = Math.abs((currentDims?.width ?? 0) - reportedWidth) >= 1;
+      const heightChanged = Math.abs((currentDims?.height ?? 0) - reportedHeight) >= 1;
+
+      if (widthChanged || heightChanged) {
+          console.log(`InteractiveNode ${nodeID}: Dims changed. New: w=${reportedWidth.toFixed(1)}, h=${reportedHeight.toFixed(1)}. Old: w=${currentDims?.width?.toFixed(1)}, h=${currentDims?.height?.toFixed(1)}`);
+          // Call the DEBOUNCED state setter only if dimensions changed
+          debouncedSetNodeDims((prev) => {
+             // We still need to check prev state inside the updater
+             // in case multiple rapid measurements occur before debounce fires.
+             const oldDimsInUpdater = prev[nodeID];
+             if (
+                oldDimsInUpdater &&
+                Math.abs(oldDimsInUpdater.width - reportedWidth) < 1 &&
+                Math.abs(oldDimsInUpdater.height - reportedHeight) < 1
+             ) {
+                return prev; // Return previous state if no change since last update WITHIN debounce period
+             }
+             // Otherwise, return the new state object
+             return {
+                ...prev,
+                [nodeID]: { width: reportedWidth, height: reportedHeight },
+             };
+          });
+      }
+      // --- End check ---
     }
   }, [
     bounds.width,
     bounds.height,
-    debouncedSetNodeDims, // Depend on the stable debounced function
+    debouncedSetNodeDims,
     nodeID,
     nodeType,
-    answer, // Keep answer dependency so it recalculates when content changes size
+    answer,
     isLoading,
     errorMessage,
     maxNodeHeightPx,
     onGenerateAnswer,
+    currentDims, // Add currentDims as dependency
   ]);
 
   const handleLocalQuestionChange = (e: ChangeEvent<HTMLTextAreaElement>) => {
@@ -398,6 +435,116 @@ export const InteractiveNode: React.FC<NodeProps<InteractiveNodeData>> = ({
   const isFocused =
     focusedId === nodeID || focusedId === nodeID.replace(/^a-/, "q-");
 
+  // Helper to find nearest edge and point
+  function getNearestEdgeAndPoint(e: React.MouseEvent, rect: DOMRect): { edge: 'top' | 'right' | 'bottom' | 'left', x: number, y: number } | null {
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    const distTop = y;
+    const distBottom = rect.height - y;
+    const distLeft = x;
+    const distRight = rect.width - x;
+    const minDist = Math.min(distTop, distBottom, distLeft, distRight);
+    if (minDist > 24) return null;
+    if (minDist === distTop) return { edge: 'top', x, y: 0 };
+    if (minDist === distBottom) return { edge: 'bottom', x, y: rect.height };
+    if (minDist === distLeft) return { edge: 'left', x: 0, y };
+    return { edge: 'right' as const, x: rect.width, y };
+  }
+
+  const handleNodeMouseMove = (e: React.MouseEvent) => {
+    if (!nodeRef.current) return;
+    const rect = nodeRef.current.getBoundingClientRect();
+    const pt = getNearestEdgeAndPoint(e, rect);
+    setConnectionPoint(pt);
+  };
+
+  const handleNodeMouseLeave = () => setConnectionPoint(null);
+
+  // --- Connection drag logic with hold ---
+  const handleConnectionMouseDown = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!connectionPoint) return;
+    isMouseDown.current = true;
+    // Compute absolute start point
+    if (!nodeRef.current) return;
+    const rect = nodeRef.current.getBoundingClientRect();
+    const startX = rect.left + connectionPoint.x;
+    const startY = rect.top + connectionPoint.y;
+    dragTimer.current = setTimeout(() => {
+      if (isMouseDown.current) {
+        setIsDraggingConnection(true);
+        setDragPos({ x: e.clientX, y: e.clientY });
+        setPendingConnection({ from: { x: startX, y: startY }, to: { x: e.clientX, y: e.clientY } });
+        // Listen for mousemove/mouseup on window
+        const handleMove = (moveEvent: MouseEvent) => {
+          setDragPos({ x: moveEvent.clientX, y: moveEvent.clientY });
+          setPendingConnection(prev => prev ? { ...prev, to: { x: moveEvent.clientX, y: moveEvent.clientY } } : null);
+        };
+        const handleUp = (upEvent: MouseEvent) => {
+          setIsDraggingConnection(false);
+          setShowTypeModal(true);
+          setModalAt({ x: upEvent.clientX, y: upEvent.clientY });
+          setPendingConnection(prev => prev ? { ...prev, to: { x: upEvent.clientX, y: upEvent.clientY } } : null);
+          window.removeEventListener("mousemove", handleMove);
+          window.removeEventListener("mouseup", handleUp);
+          isMouseDown.current = false;
+        };
+        window.addEventListener("mousemove", handleMove);
+        window.addEventListener("mouseup", handleUp);
+      }
+    }, 100);
+    // If mouse is released before 100ms, cancel
+    const handleEarlyUp = () => {
+      isMouseDown.current = false;
+      if (dragTimer.current) clearTimeout(dragTimer.current);
+      window.removeEventListener("mouseup", handleEarlyUp);
+    };
+    window.addEventListener("mouseup", handleEarlyUp);
+  };
+
+  // --- Add node after modal selection ---
+  const handleTypeSelect = (type: NodeType) => {
+    setShowTypeModal(false);
+    setModalAt(null);
+    if (pendingConnection && modalAt) {
+      // Place the new node at the modal location (canvas coordinates)
+      // For now, just use the screen coordinates; in a real app, convert to graph/canvas coords
+      // Add the node and connect it
+      handleAddNodeAt(type, modalAt.x, modalAt.y, pendingConnection.from);
+    }
+    setPendingConnection(null);
+  };
+
+  // --- Add node at a specific position and connect ---
+  const handleAddNodeAt = (type: NodeType, x: number, y: number, from: { x: number; y: number }) => {
+    let parentForAdd = nodeID;
+    if (
+      (nodeType === "llm-question" || nodeType === "user-question") &&
+      answer
+    ) {
+      parentForAdd = `a-${nodeID}`;
+    }
+    let prefix = "u";
+    if (type === "user-question") prefix = "uq";
+    else if (type === "user-file") prefix = "uf";
+    else if (type === "user-webpage") prefix = "uw";
+    const newIdSuffix = Math.random().toString(36).substring(2, 9);
+    const newNodeId = `${prefix}-${parentForAdd}-${newIdSuffix}`;
+    const newNode: QATreeNode = {
+      nodeID: newNodeId,
+      nodeType: type,
+      question: "",
+      answer: "",
+      parent: parentForAdd,
+      children: [],
+      isLoading: false,
+    };
+    addNode(newNode);
+    console.log(
+      `InteractiveNode: Added new node ${newNodeId} of type ${type} as child of ${parentForAdd} at (${x},${y})`
+    );
+  };
+
   const renderContent = () => {
     const commonMarkdownProps = { remarkPlugins: [remarkGfm] };
     const showAnsweringButton = isAnswering ?? false;
@@ -452,26 +599,6 @@ export const InteractiveNode: React.FC<NodeProps<InteractiveNodeData>> = ({
                 {showAnsweringButton ? "Answering..." : "Answer"}
               </button>
             )}
-            <div className="mt-2 flex space-x-1">
-              <button
-                onClick={() => handleAddNode("user-question")}
-                className="text-xs bg-blue-100 hover:bg-blue-200 text-blue-800 px-1.5 py-0.5 rounded"
-              >
-                + Q
-              </button>
-              <button
-                onClick={() => handleAddNode("user-file")}
-                className="text-xs bg-purple-100 hover:bg-purple-200 text-purple-800 px-1.5 py-0.5 rounded"
-              >
-                + File
-              </button>
-              <button
-                onClick={() => handleAddNode("user-webpage")}
-                className="text-xs bg-orange-100 hover:bg-orange-200 text-orange-800 px-1.5 py-0.5 rounded"
-              >
-                + URL
-              </button>
-            </div>
           </>
         );
       case "llm-answer":
@@ -515,26 +642,6 @@ export const InteractiveNode: React.FC<NodeProps<InteractiveNodeData>> = ({
                 />
               </div>
             )}
-            <div className="mt-2 flex space-x-1">
-              <button
-                onClick={() => handleAddNode("user-question")}
-                className="text-xs bg-blue-100 hover:bg-blue-200 text-blue-800 px-1.5 py-0.5 rounded"
-              >
-                + Q
-              </button>
-              <button
-                onClick={() => handleAddNode("user-file")}
-                className="text-xs bg-purple-100 hover:bg-purple-200 text-purple-800 px-1.5 py-0.5 rounded"
-              >
-                + File
-              </button>
-              <button
-                onClick={() => handleAddNode("user-webpage")}
-                className="text-xs bg-orange-100 hover:bg-orange-200 text-orange-800 px-1.5 py-0.5 rounded"
-              >
-                + URL
-              </button>
-            </div>
           </>
         );
       case "user-webpage":
@@ -574,26 +681,6 @@ export const InteractiveNode: React.FC<NodeProps<InteractiveNodeData>> = ({
                 </button>
               </div>
             )}
-            <div className="mt-2 flex space-x-1">
-              <button
-                onClick={() => handleAddNode("user-question")}
-                className="text-xs bg-blue-100 hover:bg-blue-200 text-blue-800 px-1.5 py-0.5 rounded"
-              >
-                + Q
-              </button>
-              <button
-                onClick={() => handleAddNode("user-file")}
-                className="text-xs bg-purple-100 hover:bg-purple-200 text-purple-800 px-1.5 py-0.5 rounded"
-              >
-                + File
-              </button>
-              <button
-                onClick={() => handleAddNode("user-webpage")}
-                className="text-xs bg-orange-100 hover:bg-orange-200 text-orange-800 px-1.5 py-0.5 rounded"
-              >
-                + URL
-              </button>
-            </div>
           </>
         );
       default:
@@ -602,56 +689,123 @@ export const InteractiveNode: React.FC<NodeProps<InteractiveNodeData>> = ({
   };
 
   return (
-    <div
-      ref={ref}
-      className={classNames(
-        "interactive-node border-[3px] bg-white text-black rounded p-2 shadow-sm",
-        {
-          "border-sky-400":
-            nodeType === "llm-question" || nodeType === "user-question",
-          "border-green-400": nodeType === "llm-answer",
-          "border-purple-400": nodeType === "user-file",
-          "border-orange-400": nodeType === "user-webpage",
-          "opacity-100": isFocused,
-          "opacity-60": !isFocused,
-          "ring-2 ring-yellow-400 ring-offset-1": selected,
-        }
-      )}
-      style={{
-        maxWidth: nodeType === "llm-answer" && answer.length > 800 ? 500 : 300,
-        minHeight: 50,
-      }}
-      onClick={handleNodeClick}
-    >
-      <Handle type="target" position={Position.Left} className="!bg-gray-400" />
-      <Handle
-        type="source"
-        position={Position.Right}
-        className="!bg-gray-400"
-      />
-
+    <>
       <div
-        className="node-content-wrapper"
-        style={{ maxHeight: maxNodeHeightPx, overflowY: "auto" }}
+        ref={nodeRef}
+        className={classNames(
+          "interactive-node border-[3px] bg-white text-black rounded p-2 shadow-sm",
+          {
+            "border-sky-400":
+              nodeType === "llm-question" || nodeType === "user-question",
+            "border-green-400": nodeType === "llm-answer",
+            "border-purple-400": nodeType === "user-file",
+            "border-orange-400": nodeType === "user-webpage",
+            "opacity-100": isFocused,
+            "opacity-60": !isFocused,
+            "ring-2 ring-yellow-400 ring-offset-1": selected,
+          }
+        )}
+        style={{
+          maxWidth: nodeType === "llm-answer" && answer.length > 800 ? 500 : 300,
+          minHeight: 50,
+          position: "relative",
+        }}
+        onClick={handleNodeClick}
+        onMouseMove={handleNodeMouseMove}
+        onMouseLeave={handleNodeMouseLeave}
       >
-        {isLoading && (
-          <div className="absolute top-1 right-1 text-xs text-gray-500 flex items-center">
-            <CogIcon className="w-3 h-3 mr-1 animate-spin" /> Processing...
+        <Handle type="target" position={Position.Left} className="!bg-gray-400" />
+        <Handle
+          type="source"
+          position={Position.Right}
+          className="!bg-gray-400"
+        />
+        <div
+          className="node-content-wrapper"
+          style={{ maxHeight: maxNodeHeightPx, overflowY: "auto" }}
+        >
+          {isLoading && (
+            <div className="absolute top-1 right-1 text-xs text-gray-500 flex items-center">
+              <CogIcon className="w-3 h-3 mr-1 animate-spin" /> Processing...
+            </div>
+          )}
+          {errorMessage && (
+            <div className="text-xs text-red-600 bg-red-100 p-1 rounded mt-1 flex items-center">
+              <ExclamationTriangleIcon className="w-3 h-3 mr-1 flex-shrink-0" />
+              <span className="truncate">{errorMessage}</span>
+            </div>
+          )}
+          <div className="prose prose-sm max-w-none prose-p:my-1 prose-li:my-0.5 [&>*:first-child]:mt-0">
+            {renderContent()}
           </div>
-        )}
-
-        {errorMessage && (
-          <div className="text-xs text-red-600 bg-red-100 p-1 rounded mt-1 flex items-center">
-            <ExclamationTriangleIcon className="w-3 h-3 mr-1 flex-shrink-0" />
-            <span className="truncate">{errorMessage}</span>
-          </div>
-        )}
-
-        <div className="prose prose-sm max-w-none prose-p:my-1 prose-li:my-0.5 [&>*:first-child]:mt-0">
-          {renderContent()}
         </div>
+        {connectionPoint && !isDraggingConnection && (
+          <div
+            style={{
+              position: "absolute",
+              left: connectionPoint.x - 12,
+              top: connectionPoint.y - 12,
+              zIndex: 10,
+              width: 24,
+              height: 24,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              pointerEvents: "auto",
+            }}
+          >
+            <div
+              className="bg-green-400 animate-pulse rounded-full shadow-lg border-2 border-white cursor-pointer"
+              style={{ width: 16, height: 16 }}
+              title="Add connection"
+              onMouseDown={handleConnectionMouseDown}
+            />
+          </div>
+        )}
+        {pendingConnection && isDraggingConnection && pendingConnection.from && pendingConnection.to && (
+          <svg
+            style={{
+              position: "fixed",
+              left: 0,
+              top: 0,
+              pointerEvents: "none",
+              zIndex: 1000,
+            }}
+            width={window.innerWidth}
+            height={window.innerHeight}
+          >
+            <line
+              x1={pendingConnection.from.x}
+              y1={pendingConnection.from.y}
+              x2={pendingConnection.to.x}
+              y2={pendingConnection.to.y}
+              stroke="#22c55e"
+              strokeWidth={3}
+              strokeDasharray="6 3"
+              markerEnd="url(#arrowhead)"
+            />
+            <defs>
+              <marker
+                id="arrowhead"
+                markerWidth="8"
+                markerHeight="8"
+                refX="8"
+                refY="4"
+                orient="auto"
+                markerUnits="strokeWidth"
+              >
+                <path d="M0,0 L8,4 L0,8" fill="#22c55e" />
+              </marker>
+            </defs>
+          </svg>
+        )}
       </div>
-    </div>
+      <NodeTypeModal
+        open={showTypeModal}
+        onSelect={handleTypeSelect}
+        onClose={() => setShowTypeModal(false)}
+      />
+    </>
   );
 };
 

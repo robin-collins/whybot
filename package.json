@@ -7,7 +7,10 @@
         "server"
     ],
     "scripts": {
-        "dev": "npm run start --workspace=server & npm run dev --workspace=app",
+        "dev": "concurrently \"npm:start --workspace=server\" \"npm:dev --workspace=app\"",
         "build": "npm run build --workspace=app"
+    },
+    "devDependencies": {
+        "concurrently": "^9.1.2"
     }
 }

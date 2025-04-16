@@ -136,6 +136,18 @@ The root `package.json` has been updated with the development and build scripts 
 
 ---
 
+_**User**_
+
+in the package.json in the root of the repo, is there a way to say that if you run 'npm i' in the root of the repo, it then changes to the server/ folder, runs `npm i` there, then once completes changes to the `app` folder and runs `npm i` there?
+
+---
+
+_**Assistant**_
+
+
+
+---
+
 
 
 ---

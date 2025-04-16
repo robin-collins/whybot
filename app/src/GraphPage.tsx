@@ -6,7 +6,7 @@ import React, {
   useState,
 } from "react";
 import { Flow } from "./Flow";
-import { Edge, MarkerType, Node } from "reactflow";
+import { Edge, MarkerType, Node, Position } from "reactflow";
 import {
   ArrowDownTrayIcon,
   ArrowLeftIcon,
@@ -23,18 +23,24 @@ import {
   NodeType,
   ScoredQuestion,
 } from "./types";
-import { InteractiveNodeData } from "./InteractiveNode";
+import { InteractiveNodeData, InteractiveNode } from "./InteractiveNode";
 import { AddNodeModal } from "./AddNodeModal";
 import { useAppStore } from "./store/appStore";
 import { useShallow } from "zustand/react/shallow";
 import { Persona } from "./personas";
 import { Model, MODELS } from "./models";
 import { ReactFlowProvider } from "reactflow";
+import dagre from "dagre";
 
 interface GraphPageProps {
   seedQuery: string;
   onExit: () => void;
+  shouldAutoAnswerSeed?: boolean;
+  clearAutoAnswerSeed?: () => void;
 }
+
+// Type for the promise returned by window.openai, including the cleanup method
+type OpenAIPromise = Promise<void> & { cleanup?: () => void };
 
 type ConvertTreeToFlowProps = (
   tree: QATree,
@@ -42,183 +48,203 @@ type ConvertTreeToFlowProps = (
   requestDeleteBranch: (edgeId: string) => void,
   generateAnswerForNode: (nodeId: string) => Promise<void>,
   answeringNodes: Set<string>,
-  isGenerating: boolean
+  isGenerating: boolean,
+  currentNodeDims: NodeDims
 ) => { nodes: Node<InteractiveNodeData>[]; edges: Edge[] };
 
-export const convertTreeToFlow: ConvertTreeToFlowProps = (
-  tree,
-  setNodeDimsStateSetter,
-  requestDeleteBranch,
-  generateAnswerForNode,
-  answeringNodes,
-  isGenerating
+// --- Define layoutElements function separately ---
+const layoutElements = (
+  nodes: Node[],
+  edges: Edge[],
+  nodeDims: NodeDims,
+  direction = "LR"
 ) => {
+  console.log("function layoutElements started");
+  const isHorizontal = direction === "LR";
+  const dagreGraph = new dagre.graphlib.Graph();
+  dagreGraph.setDefaultEdgeLabel(() => ({}));
+
+  const defaultNodeWidth = 250;
+  const defaultNodeHeight = 170;
+  dagreGraph.setGraph({ rankdir: direction, nodesep: 100, ranksep: 100 }); // Added ranksep
+
+  if (!nodes || nodes.length === 0) {
+      console.warn("layoutElements called with no nodes.");
+      return { nodes: [], edges: [] };
+  }
+
+  nodes.forEach((node) => {
+    const dims = nodeDims[node.id];
+    dagreGraph.setNode(node.id, {
+        width: dims?.width ?? defaultNodeWidth,
+        height: dims?.height ?? defaultNodeHeight,
+    });
+  });
+
+  edges.forEach((edge) => {
+    // Ensure source and target exist before setting edge
+    if (dagreGraph.hasNode(edge.source) && dagreGraph.hasNode(edge.target)) {
+        dagreGraph.setEdge(edge.source, edge.target);
+    } else {
+        console.warn(`layoutElements: Skipping edge ${edge.id} because source or target node not found in graph.`);
+    }
+  });
+
+  try {
+      dagre.layout(dagreGraph);
+  } catch (e) {
+      console.error("Dagre layout failed:", e);
+      // Return original nodes/edges or throw?
+      // For now, return nodes with potentially incorrect positions
+      return { nodes, edges };
+  }
+
+  // Create a *new* array for laid out nodes to ensure immutability
+  const laidOutNodes = nodes.map((node) => {
+    const nodeWithPosition = dagreGraph.node(node.id);
+    if (nodeWithPosition) {
+      return {
+        ...node,
+        targetPosition: isHorizontal ? Position.Left : Position.Top,
+        sourcePosition: isHorizontal ? Position.Right : Position.Bottom,
+        position: {
+          x: nodeWithPosition.x - (nodeWithPosition.width / 2),
+          y: nodeWithPosition.y - (nodeWithPosition.height / 2),
+        },
+      };
+    } else {
+      // Return the original node if Dagre didn't process it
+      // console.warn(`Node ${node.id} was not laid out by Dagre.`);
+      return node;
+    }
+  });
+
+  return { nodes: laidOutNodes, edges };
+  console.log("function layoutElements finished");
+};
+// --- End layoutElements ---
+
+// --- Modify convertTreeToFlow to NOT call layout ---
+export const convertTreeToFlow = (
+  tree: QATree,
+  setNodeDimsStateSetter: React.Dispatch<React.SetStateAction<NodeDims>>,
+  requestDeleteBranch: (targetNodeId: string) => void,
+  generateAnswerForNode: (nodeId: string) => Promise<void>,
+  answeringNodes: Set<string>,
+  isGenerating: boolean,
+  currentNodeDims: NodeDims
+): { nodes: Node<InteractiveNodeData>[]; edges: Edge[] } => {
+  console.log("function convertTreeToFlow started");
   const nodes: Node<InteractiveNodeData>[] = [];
+  const edges: Edge[] = [];
   console.log(
-    `convertTreeToFlow: Processing tree with ${
-      Object.keys(tree).length
-    } nodes. Node 0 Answer:`,
-    tree["0"]?.answer?.substring(0, 50)
+    `convertTreeToFlow: Processing tree with ${Object.keys(tree).length} nodes.`
   );
 
-  Object.keys(tree).forEach((key) => {
-    const nodeData = tree[key];
-    if (!nodeData) {
-      console.warn(`Node data not found for key ${key} during conversion.`);
-      return;
-    }
-
-    if (!nodeData.nodeID) {
-      console.warn(
-        `Node data for key ${key} missing nodeID, assigning fallback: ${key}`
-      );
-      nodeData.nodeID = key;
-    }
-
+  // Pass 1: Create nodes for non-answer types
+  Object.values(tree).forEach((nodeData) => {
+    if (!nodeData || !nodeData.nodeID) return;
     if (nodeData.nodeType !== 'llm-answer') {
-      const primaryNode: Node<InteractiveNodeData> = {
+      nodes.push({
         id: nodeData.nodeID,
-        type: "interactiveNode",
+        type: 'interactiveNode',
         data: {
           ...nodeData,
           nodeID: nodeData.nodeID,
           setNodeDims: setNodeDimsStateSetter,
+          currentDims: currentNodeDims[nodeData.nodeID] ?? { width: 0, height: 0 },
           onGenerateAnswer:
-            nodeData.nodeType === "llm-question" ||
-            nodeData.nodeType === "user-question"
+            (nodeData.nodeType === 'llm-question' || nodeData.nodeType === 'user-question')
               ? generateAnswerForNode
               : undefined,
           isAnswering:
-            (nodeData.nodeType === "llm-question" ||
-              nodeData.nodeType === "user-question") &&
+            (nodeData.nodeType === 'llm-question' || nodeData.nodeType === 'user-question') &&
             answeringNodes.has(nodeData.nodeID),
         },
-        position: { x: 0, y: 0 },
-      };
-      nodes.push(primaryNode);
-    }
-
-    const potentialQuestionId = key.startsWith('a-') ? key.substring(2) : null;
-    const questionNodeForAnswer = potentialQuestionId ? tree[potentialQuestionId] : null;
-
-    const isQuestionWithAnswer = (nodeData.nodeType === 'llm-question' || nodeData.nodeType === 'user-question') && nodeData.answer;
-
-    if (questionNodeForAnswer || isQuestionWithAnswer) {
-      const questionId = potentialQuestionId ?? nodeData.nodeID;
-      const questionNode = questionNodeForAnswer ?? nodeData;
-      const answerNodeId = `a-${questionId}`;
-
-      if (!nodes.some(n => n.id === answerNodeId) && questionNode.answer) {
-        console.log(
-          `convertTreeToFlow: Found answer for question ${questionId}, creating answer node ${answerNodeId}`
-        );
-        const answerNodeData: InteractiveNodeData = {
-          nodeID: answerNodeId,
-          nodeType: "llm-answer",
-          question: "",
-          answer: questionNode.answer,
-          parent: questionId,
-          children: questionNode.children || [],
-          setNodeDims: setNodeDimsStateSetter,
-          isLoading: questionNode.isLoading,
-          errorMessage: questionNode.errorMessage,
-          fileInfo: undefined,
-          url: undefined,
-          onGenerateAnswer: undefined,
-          isAnswering: false,
-        };
-        const answerGraphNode: Node<InteractiveNodeData> = {
-          id: answerNodeId,
-          type: "interactiveNode",
-          data: answerNodeData,
-          position: { x: 0, y: 0 },
-        };
-        nodes.push(answerGraphNode);
-      }
+        position: { x: 0, y: 0 }, // Default position, layout happens later
+      });
     }
   });
 
-  const edges: Edge[] = [];
+  // Pass 2: Create nodes for answer types
   Object.values(tree).forEach((nodeData) => {
-    if (!nodeData) return;
-    console.log(
-      `convertTreeToFlow: Checking edges for node ${nodeData.nodeID}`
-    );
-
-    const parentId = nodeData.parent;
-    if (parentId && tree[parentId]) {
-      const parentNodeData = tree[parentId];
-      const sourceId =
-        (parentNodeData.nodeType === "llm-question" ||
-          parentNodeData.nodeType === "user-question") &&
-        parentNodeData.answer
-          ? `a-${parentId}`
-          : parentId;
-      const targetId = nodeData.nodeID;
-      if (
-        nodes.some((n) => n.id === sourceId) &&
-        nodes.some((n) => n.id === targetId)
-      ) {
-        console.log(
-          `convertTreeToFlow: Creating edge ${sourceId} -> ${targetId}`
-        );
-        edges.push({
-          id: `${sourceId}-${targetId}`,
-          type: "deleteEdge",
-          source: sourceId,
-          target: targetId,
-          data: { requestDeleteBranch },
-          animated: isGenerating,
-          markerEnd: { type: MarkerType.Arrow },
-        });
-      } else {
-        console.warn(
-          `convertTreeToFlow: Source ${sourceId} or Target ${targetId} for edge not found.`
-        );
-      }
-    }
-
-    if (
-      (nodeData.nodeType === "llm-question" ||
-        nodeData.nodeType === "user-question") &&
-      nodeData.answer
-    ) {
-      const questionNodeId = nodeData.nodeID;
-      const answerNodeId = `a-${questionNodeId}`;
-      if (
-        nodes.some((n) => n.id === questionNodeId) &&
-        nodes.some((n) => n.id === answerNodeId)
-      ) {
-        console.log(
-          `convertTreeToFlow: Creating edge ${questionNodeId} -> ${answerNodeId}`
-        );
-        edges.push({
-          id: `${questionNodeId}-${answerNodeId}`,
-          type: "deleteEdge",
-          source: questionNodeId,
-          target: answerNodeId,
-          animated: isGenerating,
-          markerEnd: { type: MarkerType.Arrow },
-          data: { requestDeleteBranch },
-        });
-      } else {
-        console.warn(
-          `convertTreeToFlow: QNode ${questionNodeId} or ANode ${answerNodeId} not found for internal edge.`
-        );
-      }
-    }
+    if (!nodeData || nodeData.nodeType !== 'llm-answer' || !nodeData.nodeID) return;
+    if (nodes.some(n => n.id === nodeData.nodeID)) return;
+    nodes.push({
+        id: nodeData.nodeID,
+        type: 'interactiveNode',
+        data: {
+            ...nodeData,
+            nodeID: nodeData.nodeID,
+            setNodeDims: setNodeDimsStateSetter,
+            currentDims: currentNodeDims[nodeData.nodeID] ?? { width: 0, height: 0 },
+            onGenerateAnswer: undefined,
+            isAnswering: false,
+        },
+        position: { x: 0, y: 0 }, // Default position
+    });
   });
-  console.log(
-    `convertTreeToFlow: Finished. Nodes created: ${nodes.length}, Edges created: ${edges.length}`
-  );
 
-  return { nodes, edges };
+  // Pass 3: Create Edges
+  Object.values(tree).forEach((nodeData) => {
+      if (!nodeData || !nodeData.nodeID) return;
+
+      const parentId = nodeData.parent;
+      const targetId = nodeData.nodeID;
+
+      if (parentId && tree[parentId]) {
+          const parentNodeData = tree[parentId];
+          let sourceId = parentId;
+          if ((parentNodeData.nodeType === "llm-question" || parentNodeData.nodeType === "user-question") && tree[`a-${parentId}`]) {
+             sourceId = `a-${parentId}`;
+          }
+          if (nodes.some((n) => n.id === sourceId) && nodes.some((n) => n.id === targetId)) {
+             edges.push({
+                id: `${sourceId}-${targetId}`,
+                type: "deleteEdge",
+                source: sourceId,
+                target: targetId,
+                data: { requestDeleteBranch, targetNodeId: targetId },
+                animated: isGenerating,
+                markerEnd: { type: MarkerType.Arrow }
+             });
+          }
+      }
+
+      if ((nodeData.nodeType === "llm-question" || nodeData.nodeType === "user-question")) {
+          const questionNodeId = nodeData.nodeID;
+          const answerNodeId = `a-${questionNodeId}`;
+          if (tree[answerNodeId]) {
+              if (nodes.some((n) => n.id === questionNodeId) && nodes.some((n) => n.id === answerNodeId)) {
+                  edges.push({
+                    id: `${questionNodeId}-${answerNodeId}`,
+                    type: "deleteEdge",
+                    source: questionNodeId,
+                    target: answerNodeId,
+                    animated: isGenerating,
+                    markerEnd: { type: MarkerType.Arrow },
+                    data: { requestDeleteBranch, targetNodeId: answerNodeId }
+                  });
+              }
+          }
+      }
+  });
+
+  console.log(
+    `convertTreeToFlow: Finished generating raw elements. Nodes: ${nodes.length}, Edges: ${edges.length}`
+  );
+  return { nodes, edges }; // Return nodes with default positions
+  console.log("function convertTreeToFlow finished");
+  return { nodes, edges }; // Return nodes with default positions
 };
+// --- End convertTreeToFlow modification ---
 
 async function getQuestions(
-  nodeId: string
+  nodeId: string,
+  activePromisesRef: React.MutableRefObject<Map<string, OpenAIPromise>> // Pass ref
 ): Promise<void> {
-  const { qaTree: treeSnapshot, model: modelKey, persona, addNode, updateNode, setError } = useAppStore.getState();
+  console.log("function getQuestions started");
+  const { qaTree: treeSnapshot, model: modelStoreKey, persona, addNode, updateNode, setError } = useAppStore.getState();
   const node = treeSnapshot?.[nodeId];
 
   if (!node) {
@@ -243,6 +269,12 @@ async function getQuestions(
   }
 
   const person = persona;
+
+  const modelInfo = MODELS[modelStoreKey];
+  const actualModelKey = modelInfo ? modelInfo.key : modelStoreKey;
+  if (!modelInfo) {
+    console.warn(`Model key "${modelStoreKey}" not found in MODELS dictionary. Sending raw key.`);
+  }
 
   const syncChildrenWithStore = (
     parentNodeId: string,
@@ -298,124 +330,107 @@ async function getQuestions(
     });
   };
 
+  const streamNodeId = `qgen-${node.nodeID}`;
+  let questionsPromise: OpenAIPromise = Promise.resolve() as OpenAIPromise;
+
   if ("getQuestions" in person && person.getQuestions) {
     const questions = person.getQuestions(node, treeSnapshot || {});
     console.log(
       `getQuestions: Synchronously generated ${questions.length} questions for ${node.nodeID}`
     );
     syncChildrenWithStore(node.nodeID, questions);
-    return;
-  }
+  } else if ("getPromptForQuestions" in person && person.getPromptForQuestions) {
+    const promptForQuestions = person.getPromptForQuestions(node, treeSnapshot || {});
+    let questionsJson = "";
+    let finalError: string | null = null;
 
-  if (!("getPromptForQuestions" in person && person.getPromptForQuestions)) {
-    console.error(
-      `Persona ${persona.name} is missing question generation method.`
-    );
-    setError(`Persona ${persona.name} cannot generate questions.`);
-    return;
-  }
-
-  const promptForQuestions = person.getPromptForQuestions(node, treeSnapshot || {});
-  let questionsJson = "";
-  let finalError: string | null = null;
-  const streamNodeId = `qgen-${node.nodeID}`;
-
-  try {
-    await window.openai(promptForQuestions, {
+    questionsPromise = window.openai(promptForQuestions, {
       temperature: 1,
-      model: modelKey,
+      model: actualModelKey,
       nodeId: streamNodeId,
-      onChunk: (message) => {
+      onChunk: (content) => {
         try {
+          const message = JSON.stringify({ type: 'chunk', nodeId: streamNodeId, content });
           const parsed = JSON.parse(message);
-          const {
-            type,
-            nodeId: messageNodeId,
-            content,
-            message: errorMessage,
-          } = parsed;
 
-          if (messageNodeId !== streamNodeId) return;
+          if (parsed.nodeId !== streamNodeId) return;
 
-          if (type === "chunk" && content) {
-            questionsJson += content;
+          if (parsed.type === "chunk" && parsed.content) {
+            questionsJson += parsed.content;
             const closedJson = closePartialJson(questionsJson);
             try {
               const parsedQuestions = JSON.parse(closedJson);
               if (Array.isArray(parsedQuestions)) {
                 syncChildrenWithStore(node.nodeID, parsedQuestions);
               }
-            } catch (e) {
-              /* Ignore intermediate parse errors, wait for more chunks */
-            }
-          } else if (type === "error") {
-            console.error(
-              `getQuestions stream error for node ${node.nodeID}:`,
-              errorMessage
-            );
-            finalError =
-              errorMessage || `Unknown stream error generating questions for node ${node.nodeID}.`;
-            setError(finalError);
+            } catch (e) { /* Ignore intermediate parse errors */ }
           }
         } catch (e: any) {
           console.error(
-            `Error parsing WebSocket message in getQuestions (node ${node.nodeID}):`,
-            message,
+            `Error processing WebSocket message content in getQuestions (node ${node.nodeID}):`,
+            content,
             e
-          );
-          setError(
-            `Failed to parse message during question generation: ${e.message}`
           );
         }
       },
-    });
-  } catch (error: any) {
-    console.error(
-      `Error during openai call for getQuestions (node ${node.nodeID}):`,
-      error
-    );
-    finalError = error?.message || `OpenAI call failed for node ${node.nodeID}`;
-    setError(finalError);
-  }
+    }) as OpenAIPromise;
 
-  if (finalError) {
-    console.error(
-      `Final error during question generation for node ${node.nodeID}: ${finalError}`
-    );
-    setError(finalError);
-    return;
-  }
+    // Store the promise reference
+    activePromisesRef.current.set(streamNodeId, questionsPromise);
 
-  try {
-    const finalQuestions = JSON.parse(questionsJson);
-    if (Array.isArray(finalQuestions)) {
-      console.log(
-        `getQuestions: Final processing of ${finalQuestions.length} questions for ${node.nodeID}`
-      );
-      syncChildrenWithStore(node.nodeID, finalQuestions);
-    } else {
+    questionsPromise.catch((error: any) => {
       console.error(
-        `Final question JSON is not an array for node ${node.nodeID}:`,
-        questionsJson
+        `Error during openai call for getQuestions (node ${node.nodeID}):`,
+        error
       );
-      setError(`Invalid format received for questions (node ${node.nodeID})`);
-    }
-  } catch (e: any) {
-    console.error(
-      `Error parsing final question JSON for node ${node.nodeID}:`,
-      e
-    );
-    setError(
-      `Failed to parse final questions JSON (node ${node.nodeID}): ${e.message}`
-    );
+      finalError = error?.message || `OpenAI call failed for node ${node.nodeID}`;
+      setError(finalError);
+      throw error;
+    }).finally(() => {
+      // Remove the promise reference on completion/failure
+      activePromisesRef.current.delete(streamNodeId);
+      if (!finalError) {
+        try {
+          const finalQuestions = JSON.parse(questionsJson);
+          if (Array.isArray(finalQuestions)) {
+            console.log(
+              `getQuestions: Final processing of ${finalQuestions.length} questions for ${node.nodeID}`
+            );
+            syncChildrenWithStore(node.nodeID, finalQuestions);
+          } else {
+            console.error(
+              `Final question JSON is not an array for node ${node.nodeID}:`,
+              questionsJson
+            );
+            setError(`Invalid format received for questions (node ${node.nodeID})`);
+          }
+        } catch (e: any) {
+          console.error(
+            `Error parsing final question JSON for node ${node.nodeID}:`,
+            e
+          );
+          setError(
+            `Failed to parse final questions JSON (node ${node.nodeID}): ${e.message}`
+          );
+        }
+      }
+    });
+  } else {
+    console.error(`Persona ${persona?.name} is missing question generation method.`);
+    setError(`Persona ${persona?.name} cannot generate questions.`);
+    questionsPromise = Promise.reject(new Error("Persona cannot generate questions")) as OpenAIPromise;
   }
+
+  return questionsPromise;
+  console.log("function getQuestions finished");
 }
 
 function GraphPage(props: GraphPageProps) {
+  console.log("function GraphPage started");
   const {
     qaTree,
     focusedId,
-    model,
+    model: modelStoreKey,
     persona,
     isGenerating,
     error,
@@ -430,67 +445,67 @@ function GraphPage(props: GraphPageProps) {
     }))
   );
 
-  const {
-    initializeTree,
-    setFocusedId,
-    addNode,
-    updateNode,
-    deleteNodeAndDescendants,
-    setError,
-    setIsGenerating,
-    updateNodeAnswerChunk,
-  } = useAppStore(
-    useShallow((state) => ({
-      initializeTree: state.initializeTree,
-      setFocusedId: state.setFocusedId,
-      addNode: state.addNode,
-      updateNode: state.updateNode,
-      deleteNodeAndDescendants: state.deleteNodeAndDescendants,
-      setError: state.setError,
-      setIsGenerating: state.setIsGenerating,
-      updateNodeAnswerChunk: state.updateNodeAnswerChunk,
-    }))
-  );
-
   const [nodeDims, setNodeDims] = useState<NodeDims>({});
   const [isConfirmModalOpen, setIsConfirmModalOpen] = useState(false);
-  const [edgeToDelete, setEdgeToDelete] = useState<string | null>(null);
+  const [nodeToDelete, setNodeToDelete] = useState<string | null>(null);
   const [isAddNodeModalOpen, setIsAddNodeModalOpen] = useState(false);
   const [addNodeSourceId, setAddNodeSourceId] = useState<string | null>(null);
   const [answeringNodes, setAnsweringNodes] = useState<Set<string>>(new Set());
 
   const connectingNodeId = useRef<string | null>(null);
+  const activePromises = useRef<Map<string, OpenAIPromise>>(new Map());
 
   const isTreeInitialized = qaTree !== null && qaTree['q-0'] !== undefined;
 
   useEffect(() => {
     if (!isTreeInitialized && props.seedQuery) {
       console.log("GraphPage: Initializing tree in Zustand store.");
-      initializeTree(props.seedQuery);
+      useAppStore.getState().initializeTree(props.seedQuery);
     }
-  }, [isTreeInitialized, initializeTree, props.seedQuery]);
+  }, [isTreeInitialized, props.seedQuery]);
 
+  // Auto-answer seed question if requested by prop (from StartPage action)
   useEffect(() => {
-    const currentTree = useAppStore.getState().qaTree;
-    if (currentTree && currentTree['q-0'] && !currentTree['q-0'].answer && !answeringNodes.has('q-0') && !useAppStore.getState().isGenerating) {
-      if (!currentTree['a-0']) {
-        console.log("GraphPage: Triggering initial answer generation for q-0.");
-        generateAnswerForNode('q-0');
-      } else {
-        console.log("GraphPage: Initial answer node a-0 already exists, skipping initial trigger.");
-      }
+    if (
+      props.shouldAutoAnswerSeed &&
+      isTreeInitialized &&
+      qaTree &&
+      qaTree['q-0'] &&
+      !qaTree['q-0'].answer &&
+      !answeringNodes.has('q-0') &&
+      !isGenerating
+    ) {
+      generateAnswerForNode('q-0');
+      props.clearAutoAnswerSeed && props.clearAutoAnswerSeed();
     }
-  }, [isTreeInitialized, answeringNodes, isGenerating]);
+  }, [props.shouldAutoAnswerSeed, isTreeInitialized, qaTree, answeringNodes, isGenerating]);
+
+  // --- Cleanup Effect ---
+  useEffect(() => {
+    // Return a cleanup function
+    return () => {
+        console.log("GraphPage unmounting: Cleaning up active promises...");
+        activePromises.current.forEach((promise, nodeId) => {
+            console.log(` - Cleaning up promise for nodeId: ${nodeId}`);
+            promise.cleanup?.(); // Call the cleanup method if it exists
+        });
+        activePromises.current.clear(); // Clear the map
+    };
+  }, []); // Empty dependency array ensures this runs only on mount and unmount
+  // --- End Cleanup Effect ---
 
   const generateAnswerForNode = useCallback(
     async (nodeId: string) => {
+      console.log("function generateAnswerForNode started");
       console.log(`Manual trigger: generateAnswerForNode(${nodeId})`);
       setAnsweringNodes((prev) => new Set(prev).add(nodeId));
-      setIsGenerating(true);
-      setError(null);
+      useAppStore.getState().setIsGenerating(true);
+      useAppStore.getState().setError(null);
+      let questionGenerationPromise: OpenAIPromise = Promise.resolve() as OpenAIPromise;
+      let answerGenerationPromise: OpenAIPromise | null = null; // Define variable for answer promise
 
       const {
-        model: modelKey,
+        model: modelStoreKey,
         persona,
         qaTree: currentTree,
         addNode,
@@ -500,26 +515,26 @@ function GraphPage(props: GraphPageProps) {
 
       if (!currentTree) {
         console.error("generateAnswerForNode: qaTree is null!");
-        setError("Cannot generate answer: graph not initialized.");
+        useAppStore.getState().setError("Cannot generate answer: graph not initialized.");
         setAnsweringNodes((prev) => { const next = new Set(prev); next.delete(nodeId); return next; });
-        setIsGenerating(false);
+        useAppStore.getState().setIsGenerating(false);
         return;
       }
 
       const questionNode = currentTree[nodeId];
       if (!questionNode || (questionNode.nodeType !== 'llm-question' && questionNode.nodeType !== 'user-question')) {
         console.warn(`generateAnswerForNode: Invalid or non-question node ID provided: ${nodeId}`);
-        setError(`Cannot generate answer for node type: ${questionNode?.nodeType}`);
+        useAppStore.getState().setError(`Cannot generate answer for node type: ${questionNode?.nodeType}`);
         setAnsweringNodes((prev) => { const next = new Set(prev); next.delete(nodeId); return next; });
-        setIsGenerating(false);
+        useAppStore.getState().setIsGenerating(false);
         return;
       }
 
       if (!persona) {
         console.error("generateAnswerForNode: No persona selected");
-        setError("No persona selected. Please choose one.");
+        useAppStore.getState().setError("No persona selected. Please choose one.");
         setAnsweringNodes((prev) => { const next = new Set(prev); next.delete(nodeId); return next; });
-        setIsGenerating(false);
+        useAppStore.getState().setIsGenerating(false);
         return;
       }
 
@@ -544,8 +559,14 @@ function GraphPage(props: GraphPageProps) {
       }
 
       console.log(
-        `generateAnswerForNode: Proceeding to fetch answer for ${nodeId} using model ${modelKey}`
+        `generateAnswerForNode: Proceeding to fetch answer for ${nodeId} using model ${modelStoreKey}`
       );
+
+      const modelInfo = MODELS[modelStoreKey];
+      const actualModelKey = modelInfo ? modelInfo.key : modelStoreKey;
+      if (!modelInfo) {
+        console.warn(`Model key "${modelStoreKey}" not found in MODELS dictionary. Sending raw key.`);
+      }
 
       const contextNodes: QATreeNode[] = [];
       let currentAncestorId = questionNode.parent;
@@ -579,129 +600,114 @@ function GraphPage(props: GraphPageProps) {
         }
       } catch (e: any) {
         console.error(`Error getting prompt from persona ${persona.name} for node ${nodeId}:`, e);
-        setError(`Error getting prompt: ${e.message}`);
+        useAppStore.getState().setError(`Error getting prompt: ${e.message}`);
         updateNode(answerNodeId, { isLoading: false, errorMessage: `Persona prompt error: ${e.message}` });
         setAnsweringNodes((prev) => { const next = new Set(prev); next.delete(nodeId); return next; });
-        setIsGenerating(false);
+        useAppStore.getState().setIsGenerating(false);
         return;
       }
 
       try {
-        await window.openai(prompt, {
+        // Assign the promise for answer generation
+        answerGenerationPromise = window.openai(prompt, {
           temperature: 1,
-          model: modelKey,
+          model: actualModelKey,
           nodeId: answerNodeId,
-          onChunk: (message) => {
+          onChunk: (content) => {
             try {
+              const message = JSON.stringify({ type: 'chunk', nodeId: answerNodeId, content });
               const parsedMessage = JSON.parse(message);
-              const {
-                type,
-                nodeId: messageNodeId,
-                content,
-                message: errorMessage,
-              } = parsedMessage;
 
-              if (messageNodeId !== answerNodeId) return;
+              if (parsedMessage.nodeId !== answerNodeId) return;
 
-              if (type === "chunk" && content) {
-                useAppStore.getState().updateNodeAnswerChunk(answerNodeId, content);
-              } else if (type === "error") {
-                console.error(
-                  `generateAnswerForNode: Stream error for node ${answerNodeId}:`,
-                  errorMessage
-                );
-                useAppStore.getState().updateNode(answerNodeId, {
-                  isLoading: false,
-                  errorMessage: errorMessage || `Stream error for ${answerNodeId}`
-                });
-              } else if (type === "done") {
-                console.log(`generateAnswerForNode: Stream finished for ${answerNodeId}.`);
-                useAppStore.getState().updateNode(answerNodeId, { isLoading: false });
-                console.log(`generateAnswerForNode: Triggering getQuestions for answer node ${answerNodeId}`);
-                getQuestions(answerNodeId);
+              if (parsedMessage.type === "chunk" && parsedMessage.content) {
+                useAppStore.getState().updateNodeAnswerChunk(answerNodeId, parsedMessage.content);
               }
             } catch (e) {
               console.error(
-                `generateAnswerForNode: Error parsing stream message for ${answerNodeId}:`,
-                message,
+                `generateAnswerForNode: Error processing stream chunk for ${answerNodeId}:`,
+                content,
                 e
               );
-              useAppStore.getState().updateNode(answerNodeId, {
-                isLoading: false,
-                errorMessage: "Failed to parse stream message."
-              });
             }
           }
-        });
+        }) as OpenAIPromise;
+
+        // Store the answer promise reference
+        activePromises.current.set(answerNodeId, answerGenerationPromise);
+
+        // Await the answer generation
+        await answerGenerationPromise;
+
+        // Answer succeeded, remove its promise ref
+        activePromises.current.delete(answerNodeId);
+
+        console.log(`generateAnswerForNode: Answer stream done for ${answerNodeId}. Triggering questions.`);
+        useAppStore.getState().updateNode(answerNodeId, { isLoading: false });
+
+        const nodeExists = useAppStore.getState().qaTree?.[answerNodeId];
+        if (nodeExists) {
+            // Pass the ref to getQuestions
+            questionGenerationPromise = getQuestions(answerNodeId, activePromises);
+            await questionGenerationPromise; // Wait for questions (promise already stored/deleted inside getQuestions)
+            console.log(`generateAnswerForNode: Question generation finished (or failed) for ${answerNodeId}.`);
+        } else {
+            console.error(`Node ${answerNodeId} not found in store after answer completion.`);
+            useAppStore.getState().setError(`Node ${answerNodeId} disappeared unexpectedly after generation.`);
+        }
+
       } catch (error: any) {
-        console.error("Error calling window.openai or processing stream:", error);
-        setError(`Failed to get answer: ${error.message}`);
-        useAppStore.getState().updateNode(answerNodeId, { isLoading: false, errorMessage: error.message });
+        console.error(`Error during generation process for question node ${nodeId}:`, error);
+        useAppStore.getState().setError(`Generation failed: ${error.message}`);
+        const currentAnswerNode = useAppStore.getState().qaTree?.[answerNodeId];
+        if (currentAnswerNode) {
+            useAppStore.getState().updateNode(answerNodeId, { isLoading: false, errorMessage: error.message });
+        }
+        // Ensure promise refs are cleaned up on error too
+        if (answerNodeId && activePromises.current.has(answerNodeId)) {
+            activePromises.current.delete(answerNodeId);
+        }
       } finally {
         setAnsweringNodes((prev) => {
           const next = new Set(prev);
           next.delete(nodeId);
           return next;
         });
-        setIsGenerating(false);
-        console.log(`generateAnswerForNode: Finished processing for question node ${nodeId}`);
+        useAppStore.getState().setIsGenerating(false);
+        console.log(`generateAnswerForNode: FINISHED generation process for question node ${nodeId}`);
       }
+      console.log("function generateAnswerForNode finished");
     },
-    [setError, setIsGenerating, addNode, updateNode, updateNodeAnswerChunk]
+    []
   );
 
-  const requestDeleteBranch = useCallback((edgeId: string) => {
-    console.log("Requesting confirmation to delete edge:", edgeId);
-    setEdgeToDelete(edgeId);
+  const requestDeleteBranch = useCallback((targetNodeId: string) => {
+    console.log("Requesting confirmation to delete branch starting at node:", targetNodeId);
+    setNodeToDelete(targetNodeId);
     setIsConfirmModalOpen(true);
   }, []);
 
   const handleConfirmDelete = useCallback(() => {
-    if (!edgeToDelete) return;
-    console.log("Confirmed deletion for edge:", edgeToDelete);
+    if (!nodeToDelete) return;
+    const targetNodeId = nodeToDelete;
+    console.log("Confirmed deletion for branch starting at node:", targetNodeId);
 
-    const edgeParts = edgeToDelete.split("-");
-    let targetNodeId: string | null = null;
-
-    if (edgeParts.length >= 2) {
-      let potentialTarget = edgeParts[edgeParts.length - 1];
-      if ((potentialTarget === '0' || potentialTarget === '1') && edgeParts.length >= 3) {
-        potentialTarget = edgeParts.slice(edgeParts.length - 2).join('-');
-      }
-
-      if (useAppStore.getState().qaTree?.[potentialTarget]) {
-        targetNodeId = potentialTarget;
-      } else if (useAppStore.getState().qaTree?.[edgeParts.slice(1).join('-')]) {
-        targetNodeId = edgeParts.slice(1).join('-');
-      } else {
-        console.error(`Could not reliably parse target node ID from edge: ${edgeToDelete}`);
-      }
-
-      console.log(`Parsed edge ${edgeToDelete}: Determined Target=${targetNodeId}`);
-    } else {
-      console.error(`Could not parse edge ID: ${edgeToDelete}`);
-    }
-
-    if (!targetNodeId) {
-      console.error(
-        `Could not determine deletion target from edge ${edgeToDelete}`
-      );
-      setError(
-        `Failed to determine deletion target from edge ${edgeToDelete}.`
-      );
-      setIsConfirmModalOpen(false);
-      setEdgeToDelete(null);
-      return;
+    if (!useAppStore.getState().qaTree?.[targetNodeId]) {
+        console.error(`Node to delete (${targetNodeId}) not found in current tree state.`);
+        useAppStore.getState().setError(`Node to delete (${targetNodeId}) was not found.`);
+        setIsConfirmModalOpen(false);
+        setNodeToDelete(null);
+        return;
     }
 
     console.log(
       `Calling deleteNodeAndDescendants action for root: ${targetNodeId}`
     );
-    deleteNodeAndDescendants(targetNodeId);
+    useAppStore.getState().deleteNodeAndDescendants(targetNodeId);
 
     setIsConfirmModalOpen(false);
-    setEdgeToDelete(null);
-  }, [edgeToDelete, deleteNodeAndDescendants, setError]);
+    setNodeToDelete(null);
+  }, [nodeToDelete]);
 
   const onConnectStart = useCallback(
     (
@@ -714,55 +720,75 @@ function GraphPage(props: GraphPageProps) {
   );
 
   const onConnectEnd = useCallback((event: MouseEvent | TouchEvent) => {
-    const target = event.target as Element;
-    const targetIsPane = target.classList.contains("react-flow__pane");
-    const sourceNodeId = connectingNodeId.current;
-    const currentTree = useAppStore.getState().qaTree;
+    // const target = event.target as Element;
+    // const targetIsPane = target.classList.contains("react-flow__pane");
+    // const sourceNodeId = connectingNodeId.current;
+    // const currentTree = useAppStore.getState().qaTree;
 
-    if (targetIsPane && sourceNodeId && currentTree) {
-      const sourceNode = currentTree[sourceNodeId];
-      const isValidSource = sourceNode && (
-        sourceNode.nodeType === "llm-answer" ||
-        sourceNode.nodeType === "user-file" ||
-        sourceNode.nodeType === "user-webpage"
-      );
+    // if (targetIsPane && sourceNodeId && currentTree) {
+    //   const sourceNode = currentTree[sourceNodeId];
+    //   const isValidSource = sourceNode && (
+    //     sourceNode.nodeType === "llm-answer" ||
+    //     sourceNode.nodeType === "user-file" ||
+    //     sourceNode.nodeType === "user-webpage"
+    //   );
 
-      if (isValidSource) {
-        console.log(`Connection ended on pane from valid source: ${sourceNodeId}`);
-        setAddNodeSourceId(sourceNodeId);
-        setIsAddNodeModalOpen(true);
-      } else {
-        console.log(
-          `Connection end from invalid source node type/state: ${sourceNodeId} (Type: ${sourceNode?.nodeType})`
-        );
-      }
-    } else {
-      console.log(`Connection ended. Target is pane: ${targetIsPane}, Source Node ID: ${sourceNodeId}`);
-    }
-    connectingNodeId.current = null;
+    //   if (isValidSource) {
+    //     console.log(`Connection ended on pane from valid source: ${sourceNodeId}`);
+    //     setAddNodeSourceId(sourceNodeId);
+    //     setIsAddNodeModalOpen(true);
+    //   } else {
+    //     console.log(
+    //       `Connection end from invalid source node type/state: ${sourceNodeId} (Type: ${sourceNode?.nodeType})`
+    //     );
+    //   }
+    // } else {
+    //   console.log(`Connection ended. Target is pane: ${targetIsPane}, Source Node ID: ${sourceNodeId}`);
+    // }
+    // connectingNodeId.current = null;
   }, []);
 
-  const { nodes, edges } = useMemo(() => {
+  // --- Memoize Raw Nodes/Edges (Pass nodeDims to converter) ---
+  const memoizedNodesAndEdges = useMemo(() => {
     if (!qaTree) {
       return { nodes: [], edges: [] };
     }
-    console.log("useMemo: Recalculating nodes/edges for React Flow.");
-    return convertTreeToFlow(
-      qaTree,
-      setNodeDims,
-      requestDeleteBranch,
-      generateAnswerForNode,
-      answeringNodes,
-      isGenerating
+    console.log(
+      `useMemo (Nodes/Edges): Recalculating raw elements... isGenerating=${isGenerating}, answeringNodes=${JSON.stringify(Array.from(answeringNodes))}, treeKeys=${JSON.stringify(Object.keys(qaTree))}`
     );
+    const result = convertTreeToFlow(
+        qaTree,
+        setNodeDims,
+        requestDeleteBranch,
+        generateAnswerForNode,
+        answeringNodes,
+        isGenerating,
+        nodeDims
+    );
+    console.log(`useMemo (Nodes/Edges): Finished. Nodes: ${result.nodes.length}, Edges: ${result.edges.length}`);
+    return result;
   }, [
     qaTree,
-    setNodeDims,
     requestDeleteBranch,
     generateAnswerForNode,
     answeringNodes,
     isGenerating,
+    nodeDims
   ]);
+  // --- End Memoize Raw Nodes/Edges ---
+
+  // --- Memoize Layout Calculation ---
+  const laidOutElements = useMemo(() => {
+      console.log(`useMemo (Layout): Recalculating layout... nodeDimsKeys=${JSON.stringify(Object.keys(nodeDims))}, nodeCount=${memoizedNodesAndEdges.nodes.length}`);
+      const result = layoutElements(
+          memoizedNodesAndEdges.nodes,
+          memoizedNodesAndEdges.edges,
+          nodeDims
+      );
+      console.log(`useMemo (Layout): Finished. Nodes: ${result.nodes.length}, Edges: ${result.edges.length}`);
+      return result;
+  }, [memoizedNodesAndEdges.nodes, memoizedNodesAndEdges.edges, nodeDims]); // Depend on raw elements and dims
+  // --- End Memoize Layout Calculation ---
 
   const handleAddNodeFromModal = (type: NodeType) => {
     if (addNodeSourceId) {
@@ -784,7 +810,7 @@ function GraphPage(props: GraphPageProps) {
         children: [],
         isLoading: false,
       };
-      addNode(newNode);
+      useAppStore.getState().addNode(newNode);
       console.log(`Added new node ${newNodeId} from modal, parent: ${addNodeSourceId}`);
     } else {
       console.warn("handleAddNodeFromModal called without addNodeSourceId");
@@ -798,7 +824,7 @@ function GraphPage(props: GraphPageProps) {
     return <div>Loading...</div>;
   }
 
-  const currentModelInfo = model ? MODELS[model] : null;
+  const currentModelInfo = modelStoreKey ? MODELS[modelStoreKey] : null;
   const currentPersonaInfo = persona;
 
   return (
@@ -807,7 +833,7 @@ function GraphPage(props: GraphPageProps) {
         <div className="fixed top-0 left-1/2 transform -translate-x-1/2 mt-2 z-50 bg-red-100 border border-red-400 text-red-700 px-4 py-2 rounded shadow-md max-w-md text-center">
           <strong>Error:</strong> {error}
           <button
-            onClick={() => setError(null)}
+            onClick={() => useAppStore.getState().setError(null)}
             className="ml-4 text-red-500 hover:text-red-700 font-bold"
           >
             X
@@ -817,8 +843,8 @@ function GraphPage(props: GraphPageProps) {
 
       <ReactFlowProvider>
         <Flow
-          flowNodes={nodes}
-          flowEdges={edges}
+          flowNodes={laidOutElements.nodes}
+          flowEdges={laidOutElements.edges}
           nodeDims={nodeDims}
           onConnectStart={onConnectStart}
           onConnectEnd={onConnectEnd}
@@ -889,12 +915,13 @@ function GraphPage(props: GraphPageProps) {
         isOpen={isConfirmModalOpen}
         onClose={() => {
           setIsConfirmModalOpen(false);
-          setEdgeToDelete(null);
+          setNodeToDelete(null);
         }}
         onConfirm={handleConfirmDelete}
       />
     </div>
   );
+  console.log("function GraphPage finished");
 }
 
 export default GraphPage;

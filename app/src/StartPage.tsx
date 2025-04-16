@@ -32,7 +32,7 @@ function StartPage(props: {
   onSubmitPrompt: (prompt: string) => void;
   onSetExample: (example: Example) => void;
 }) {
-  const { model, persona, setModel, setPersona } = useAppStore(
+  const { model: modelStoreKey, persona, setModel, setPersona } = useAppStore(
     useShallow((state) => ({
       model: state.model,
       persona: state.persona,
@@ -55,10 +55,10 @@ function StartPage(props: {
   const [isSidebarOpen, setSidebarOpen] = useState(false);
 
   const promptsRemainingQuery = useQuery({
-    queryKey: ["promptsRemaining", model],
+    queryKey: ["promptsRemaining", modelStoreKey],
     queryFn: async () => {
       const result = await fetch(
-        `${SERVER_HOST}/api/prompts-remaining?model=${model}&fp=${await getFingerprint()}`
+        `${SERVER_HOST}/api/prompts-remaining?model=${modelStoreKey}&fp=${await getFingerprint()}`
       );
       return result.json();
     },
@@ -88,13 +88,13 @@ function StartPage(props: {
     }
     props.onSubmitPrompt(query);
     fetch(
-      `${SERVER_HOST}/api/use-prompt?model=${model}&fp=${await getFingerprint()}`
+      `${SERVER_HOST}/api/use-prompt?model=${modelStoreKey}&fp=${await getFingerprint()}`
     );
 
     try {
       const docRef = await addDoc(collection(db, "prompts"), {
         userId: await getFingerprint(),
-        model: model,
+        model: modelStoreKey,
         persona: persona.name,
         prompt: query,
         createdAt: new Date(),
@@ -109,7 +109,11 @@ function StartPage(props: {
 
   const [randomQuestionLoading, setRandomQuestionLoading] = useState(false);
 
-  const currentPersonaKey = useMemo(() => persona?.name ?? Object.keys(PERSONAS)[0], [persona]);
+  const currentPersonaKey = useMemo(() => {
+    if (!persona) return 'researcher';
+    return Object.keys(PERSONAS).find(key => PERSONAS[key] === persona) || 'researcher';
+  }, [persona]);
+
   const currentPersonaObject = useMemo(() => persona ?? PERSONAS[Object.keys(PERSONAS)[0]], [persona]);
 
   return (
@@ -123,7 +127,7 @@ function StartPage(props: {
             isOpen={isSidebarOpen}
             persona={currentPersonaKey}
             onSetPersona={(key) => setPersona(PERSONAS[key])}
-            model={model}
+            model={modelStoreKey}
             onSetModel={setModel}
           />
           <div className="flex items-center gap-4 flex-wrap">
@@ -233,26 +237,22 @@ function StartPage(props: {
                   if (disableEverything) return;
                   setQuery("");
                   setRandomQuestionLoading(true);
+
+                  const modelInfo = MODELS[modelStoreKey];
+                  const actualModelKey = modelInfo ? modelInfo.key : modelStoreKey;
+                  if (!modelInfo) {
+                      console.warn(`Model key "${modelStoreKey}" not found in MODELS dictionary. Sending raw key.`);
+                  }
+
                   try {
                       await window.openai(
                         currentPersonaObject.promptForRandomQuestion,
                         {
-                          model: "gpt-4o-mini",
+                          model: actualModelKey,
                           temperature: 1,
                           nodeId: "random-question-node",
                           onChunk: (chunk) => {
-                            try {
-                              const parsed = JSON.parse(chunk);
-                              if (parsed.type === "chunk" && parsed.content) {
-                                setQuery((old) => old + parsed.content);
-                              }
-                            } catch (e) {
-                              console.error(
-                                "Error parsing random question chunk:",
-                                chunk,
-                                e
-                              );
-                            }
+                            setQuery((old) => old + chunk);
                           },
                         }
                       );
@@ -294,7 +294,7 @@ function StartPage(props: {
           try {
             const docRef = await addDoc(collection(db, "backdoorHits"), {
               userId: await getFingerprint(),
-              model: model,
+              model: modelStoreKey,
               persona: currentPersonaKey,
               prompt: query,
               createdAt: new Date(),
@@ -306,7 +306,7 @@ function StartPage(props: {
             console.error("Error adding document: ", e);
           }
           fetch(
-            `${SERVER_HOST}/api/moar-prompts?model=${model}&fp=${await getFingerprint()}`
+            `${SERVER_HOST}/api/moar-prompts?model=${modelStoreKey}&fp=${await getFingerprint()}`
           );
         }}
       />

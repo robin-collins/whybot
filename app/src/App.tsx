@@ -9,6 +9,7 @@ import AboutPage from "./AboutPage";
 function CoreStuff() {
   const [seedQuery, setSeedQuery] = useState<string>();
   const [example, setExample] = useState<Example>();
+  const [shouldAutoAnswerSeed, setShouldAutoAnswerSeed] = useState(false);
 
   return example ? (
     <div className="text-white bg-zinc-700 h-screen w-screen fixed left-0 top-0">
@@ -25,6 +26,8 @@ function CoreStuff() {
       <GraphPage
         onExit={() => setSeedQuery(undefined)}
         seedQuery={seedQuery}
+        shouldAutoAnswerSeed={shouldAutoAnswerSeed}
+        clearAutoAnswerSeed={() => setShouldAutoAnswerSeed(false)}
       />
     </div>
   ) : (
@@ -33,6 +36,7 @@ function CoreStuff() {
         onSetExample={setExample}
         onSubmitPrompt={(query) => {
           setSeedQuery(query);
+          setShouldAutoAnswerSeed(true);
         }}
       />
     </div>

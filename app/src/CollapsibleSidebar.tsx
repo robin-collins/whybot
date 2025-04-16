@@ -70,7 +70,7 @@ export const Sidebar = (props: SidebarProps) => {
         </div>
         <div className="flex flex-col ml-4">
           <Dropdown
-            className="w-44 mb-4"
+            className="w-48 mb-4"
             value={props.persona}
             options={Object.entries(PERSONAS).map(([k, v]) => {
               return { value: k, name: v.name, popup: v.description };
@@ -78,7 +78,7 @@ export const Sidebar = (props: SidebarProps) => {
             onChange={props.onSetPersona}
           />
           <Dropdown
-            className="w-28"
+            className="w-48"
             value={props.model}
             options={Object.entries(MODELS).map(([k, v]) => {
               return { value: k, name: v.name, popup: v.description };
