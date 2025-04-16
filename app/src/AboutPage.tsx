@@ -91,6 +91,8 @@ if (Math.random() < 0.5) {
 }
 
 function AboutPage() {
+  console.log("function AboutPage started");
+  console.log("function AboutPage finished");
   return (
     <div className="min-h-screen bg-zinc-700 text-white p-4">
       <Link

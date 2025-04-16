@@ -7,10 +7,12 @@ import { RouterProvider, createBrowserRouter } from "react-router-dom";
 import AboutPage from "./AboutPage";
 
 function CoreStuff() {
+  console.log("function CoreStuff started");
   const [seedQuery, setSeedQuery] = useState<string>();
   const [example, setExample] = useState<Example>();
   const [shouldAutoAnswerSeed, setShouldAutoAnswerSeed] = useState(false);
 
+  console.log("function CoreStuff finished");
   return example ? (
     <div className="text-white bg-zinc-700 h-screen w-screen fixed left-0 top-0">
       <GraphPageExample
@@ -55,6 +57,8 @@ const router = createBrowserRouter([
 ]);
 
 function App() {
+  console.log("function App started");
+  console.log("function App finished");
   return <RouterProvider router={router} />;
 }
 

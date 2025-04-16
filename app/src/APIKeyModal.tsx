@@ -17,8 +17,10 @@ type APIKeyModalProps = {
 };
 
 export function APIKeyModal({ open, onClose }: APIKeyModalProps) {
+  console.log("function APIKeyModal started");
   const setGlobalError = useAppStore((state) => state.setError);
 
+  console.log("function APIKeyModal finished");
   return (
     <Transition.Root show={open} as={Fragment}>
       <Dialog as="div" className="relative z-10" onClose={onClose}>
@@ -85,6 +87,8 @@ export function APIInfoModal({
   onClose,
   setApiKeyModalOpen,
 }: APIInfoModalProps) {
+  console.log("function APIInfoModal started");
+  console.log("function APIInfoModal finished");
   return (
     <>
       <Transition.Root show={open} as={Fragment}>

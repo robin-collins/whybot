@@ -13,6 +13,8 @@ export function ConfirmDeleteModal({
   onClose,
   onConfirm,
 }: ConfirmDeleteModalProps) {
+  console.log("function ConfirmDeleteModal started");
+  console.log("function ConfirmDeleteModal finished");
   return (
     <Transition.Root show={isOpen} as={Fragment}>
       <Dialog as="div" className="relative z-10" onClose={onClose}>

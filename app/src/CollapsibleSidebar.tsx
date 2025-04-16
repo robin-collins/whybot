@@ -11,6 +11,8 @@ type SidebarButtonProps = {
 };
 
 export const SidebarButton = (props: SidebarButtonProps) => {
+  console.log("function SidebarButton started");
+  console.log("function SidebarButton finished");
   return (
     <button
       onClick={props.toggleSidebar}
@@ -48,6 +50,8 @@ type SidebarProps = {
   onSetModel: (model: string) => void;
 };
 export const Sidebar = (props: SidebarProps) => {
+  console.log("function Sidebar started");
+  console.log("function Sidebar finished");
   return (
     <div
       className={`fixed z-30 inset-y-0 left-0 transform ${

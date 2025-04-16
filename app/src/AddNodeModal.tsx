@@ -21,9 +21,12 @@ export const AddNodeModal: React.FC<AddNodeModalProps> = ({
   onAddNode,
   sourceNodeId,
 }) => {
+  console.log("function AddNodeModal started");
   const handleAdd = (type: NodeType) => {
+    console.log("function handleAdd started");
     onAddNode(type);
     onClose(); // Close modal after adding
+    console.log("function handleAdd finished");
   };
 
   return (
@@ -128,4 +131,5 @@ export const AddNodeModal: React.FC<AddNodeModalProps> = ({
       </Dialog>
     </Transition>
   );
+  console.log("function AddNodeModal finished");
 };
