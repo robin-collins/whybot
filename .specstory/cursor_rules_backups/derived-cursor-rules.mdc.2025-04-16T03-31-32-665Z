@@ -1,7 +1,3 @@
----
-description: Cursor rules derived by SpecStory from the project AI interaction history
-globs: *
----
 
 ## PROJECT OVERVIEW
 
@@ -115,25 +111,24 @@ The project uses a structured folder organization to enhance maintainability and
  - Before pushing code, ensure all tests pass.
  - Code reviews are mandatory for all pull requests.
  - Release process: (To be defined)
- - Use a monorepo structure with workspaces defined in the root `package.json` to manage the `/app` and `/server` packages.  The root `package.json` should include a `workspaces` array specifying these directories.
+ 
 
-
-## REFERENCE EXAMPLES
+ ## REFERENCE EXAMPLES
 
  - Example graph data structures are stored in `/server/examples`.
  - Reference examples for various components and functionalities can be added here.
+ 
 
-
-## PROJECT DOCUMENTATION & CONTEXT SYSTEM
+ ## PROJECT DOCUMENTATION & CONTEXT SYSTEM
 
  - Project documentation is maintained using Markdown files.
  - The main project plan is located in `PLAN.md`.
  - Detailed documentation is maintained for each component and function.
  - Version 1.0.0 of the graph export format is currently in use.
  - Backend API endpoints added: `/api/fetch-webpage`
+ 
 
-
-## DEBUGGING
+ ## DEBUGGING
 
  - Use the browser's developer tools to debug frontend issues.
- - Use verbose logging in the backend server
+ - Use verbose logging in the backend server (set LOGGING_LEVEL to "debug") to track requests, responses, and WebSocket connections. The server logs to a file named `server-{DATETIME}.log` in the `server/logs` directory, where DATETIME

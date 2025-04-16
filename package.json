@@ -1,0 +1,13 @@
+{
+    "name": "my-monorepo-project",
+    "version": "1.0.0",
+    "private": true,
+    "workspaces": [
+        "app",
+        "server"
+    ],
+    "scripts": {
+        "dev": "npm run start --workspace=server & npm run dev --workspace=app",
+        "build": "npm run build --workspace=app"
+    }
+}
