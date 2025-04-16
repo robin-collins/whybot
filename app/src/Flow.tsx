@@ -68,7 +68,8 @@ const layoutElements = (
         width: nodeDims[node.id]["width"],
         height: nodeDims[node.id]["height"],
       });
-    } else { // Use defaults if dims not available
+    } else {
+      // Use defaults if dims not available
       dagreGraph.setNode(node.id, { width: nodeWidth, height: nodeHeight });
     }
   });
@@ -89,8 +90,8 @@ const layoutElements = (
       node.sourcePosition = isHorizontal ? Position.Right : Position.Bottom;
 
       node.position = {
-        x: nodeWithPosition.x - (nodeWithPosition.width / 2) + 60,
-        y: nodeWithPosition.y - (nodeWithPosition.height / 2) + 60,
+        x: nodeWithPosition.x - nodeWithPosition.width / 2 + 60,
+        y: nodeWithPosition.y - nodeWithPosition.height / 2 + 60,
       };
     } else {
       // Assign a default position if Dagre didn't handle it? Or leave as is?
@@ -100,89 +101,6 @@ const layoutElements = (
 
   // Return original nodes/edges with updated positions
   return { nodes, edges };
-};
-
-export const openai_browser = async (
-  prompt: string,
-  opts: {
-    apiKey: string;
-    model: string;
-    temperature: number;
-    onChunk: (chunk: string) => void;
-  }
-) => {
-  return new Promise(async (resolve, reject) => {
-    if (opts.temperature < 0 || opts.temperature > 1) {
-      console.error(
-        `Temperature is set to an invalid value: ${opts.temperature}`
-      );
-      return;
-    }
-    const params = {
-      model: opts.model,
-      stream: true,
-      messages: [
-        {
-          role: "system",
-          content:
-            "You are a helpful assistant who always responds in English. Respond without any preamble, explanation, confirmation or commentary, just the final answer. Respond in markdown format if requested and make use of ## Headers, *italics*, **bold**, and lists as well as emoticons to make the answer more engaging. If requested to respond in JSON, only respond in JSON format, do not enclose it in ```json tags.",
-        },
-        { role: "user", content: prompt },
-      ],
-      max_tokens: 200,
-      temperature: opts.temperature,
-      n: 1,
-    };
-    const headers = {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${opts.apiKey}`,
-    };
-    const response = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "post",
-      body: JSON.stringify(params),
-      headers,
-    });
-    if (!response.body) {
-      reject("Response body is null");
-      return;
-    }
-    const reader = response.body
-      .pipeThrough(new TextDecoderStream())
-      .getReader();
-    StreamLoop: while (true) {
-      const { value } = await reader.read();
-      if (value === undefined) {
-        console.warn("Reader returned undefined value.");
-        continue;
-      }
-      try {
-        const maybeError = JSON.parse(value);
-        if ("error" in maybeError) {
-          reject(maybeError.error.message);
-          break StreamLoop;
-        }
-      } catch (error) {}
-      const lines = value.split("\n").filter((l) => l.trim() !== "");
-      for (const line of lines) {
-        const maybeJsonString = line.replace(/^data: /, "");
-        console.log("maybeJsonString", maybeJsonString);
-        if (maybeJsonString == "[DONE]") {
-          resolve("stream is done");
-          break StreamLoop;
-        }
-        try {
-          const payload = JSON.parse(maybeJsonString);
-          const completion = payload.choices[0].delta.content;
-          if (completion != null) {
-            opts.onChunk(completion);
-          }
-        } catch (error) {
-          console.error(error);
-          reject(error);
-        }
-      }
-    }
-  });
 };
 
 export const openai_server = async (
@@ -207,18 +125,21 @@ export const openai_server = async (
     }
 
     try {
-        ws = new WebSocket(`${SERVER_HOST_WS}/ws?fp=${fingerprint}`);
+      ws = new WebSocket(`${SERVER_HOST_WS}/ws?fp=${fingerprint}`);
     } catch (error) {
-        console.error("Failed to create WebSocket:", error);
-        reject(error);
-        return;
+      console.error("Failed to create WebSocket:", error);
+      reject(error);
+      return;
     }
 
     // Create an abort controller for cleanup
     const cleanup = () => {
-      if (ws && ws.readyState < 2) { // 0 = CONNECTING, 1 = OPEN
+      if (ws && ws.readyState < 2) {
+        // 0 = CONNECTING, 1 = OPEN
         isAborted = true;
-        console.log(`Manually closing WebSocket for node ${opts.nodeId} during cleanup`);
+        console.log(
+          `Manually closing WebSocket for node ${opts.nodeId} during cleanup`
+        );
         ws.close(1000, "Client cleanup"); // Use 1000 (normal closure) code
       }
     };
@@ -226,7 +147,9 @@ export const openai_server = async (
     ws.onopen = () => {
       console.log(`WebSocket opened for node ${opts.nodeId}`);
       if (isAborted) {
-        console.log(`Connection opened but marked as aborted for node ${opts.nodeId}, closing immediately`);
+        console.log(
+          `Connection opened but marked as aborted for node ${opts.nodeId}, closing immediately`
+        );
         ws?.close(1000, "Aborted after open");
         return;
       }
@@ -250,28 +173,41 @@ export const openai_server = async (
 
     ws.onerror = (event) => {
       if (isAborted) {
-        console.log(`Ignoring WebSocket error for aborted connection (node ${opts.nodeId})`);
+        console.log(
+          `Ignoring WebSocket error for aborted connection (node ${opts.nodeId})`
+        );
         return;
       }
 
-      const error = event instanceof ErrorEvent ? event.message : 'WebSocket error occurred';
+      const error =
+        event instanceof ErrorEvent
+          ? event.message
+          : "WebSocket error occurred";
       console.error(`WebSocket error for node ${opts.nodeId}:`, error);
-      reject(new Error(error || 'WebSocket error'));
+      reject(new Error(error || "WebSocket error"));
     };
 
     ws.onclose = (event) => {
-      console.log(`WebSocket closed for node ${opts.nodeId}. Code: ${event.code}, Reason: ${event.reason}, Clean: ${event.wasClean}`);
+      console.log(
+        `WebSocket closed for node ${opts.nodeId}. Code: ${event.code}, Reason: ${event.reason}, Clean: ${event.wasClean}`
+      );
 
       if (isAborted) {
-        console.log(`WebSocket was aborted for node ${opts.nodeId}, resolving promise`);
+        console.log(
+          `WebSocket was aborted for node ${opts.nodeId}, resolving promise`
+        );
         resolve();
         return;
       }
 
       if (event.wasClean) {
-         resolve();
+        resolve();
       } else {
-         reject(new Error(`WebSocket closed uncleanly. Code: ${event.code}, Reason: ${event.reason}`));
+        reject(
+          new Error(
+            `WebSocket closed uncleanly. Code: ${event.code}, Reason: ${event.reason}`
+          )
+        );
       }
     };
 
@@ -282,7 +218,9 @@ export const openai_server = async (
   (promise as any).cleanup = () => {
     if (ws && ws.readyState < 2) {
       isAborted = true;
-      console.log(`Cleanup called externally for WebSocket (node ${opts.nodeId})`);
+      console.log(
+        `Cleanup called externally for WebSocket (node ${opts.nodeId})`
+      );
       ws.close(1000, "External cleanup");
     }
   };
@@ -290,61 +228,15 @@ export const openai_server = async (
   return promise;
 };
 
-// Function to get streaming openai completion
-export const openai = async (
-  prompt: string,
-  opts: {
-    apiKey?: string;
-    model: string;
-    temperature: number;
-    onChunk: (chunk: string) => void;
-    nodeId: string;
-  }
-) => {
-  if (opts.apiKey) {
-    console.log("you are using the browser api key");
-    return openai_browser(prompt, {
-      apiKey: opts.apiKey,
-      model: opts.model,
-      temperature: opts.temperature,
-      onChunk: opts.onChunk,
-    });
-  }
-  return openai_server(prompt, {
-    model: opts.model,
-    temperature: opts.temperature,
-    onChunk: opts.onChunk,
-    nodeId: opts.nodeId,
-  });
-};
-
-// Explicitly cast the function to match the window.openai type
-const windowOpenAI = ((prompt: string, opts: {
-  apiKey?: string;
-  model: string;
-  temperature: number;
-  nodeId?: string;
-  onChunk: (chunk: string) => void;
-}) => {
-  // Ensure nodeId is present for server calls
-  if (!opts.nodeId) {
-    console.warn("No nodeId provided for openai call, using fallback");
-    opts.nodeId = "fallback-" + Math.random().toString(36).substring(2, 9);
-  }
-  return openai(prompt, opts as any);
-}) as Window["openai"];
-
-// Assign the openai function to window at initialization
-if (typeof window !== 'undefined') {
-  window.openai = windowOpenAI;
-}
-
 type FlowProps = {
   flowNodes: Node[];
   flowEdges: Edge[];
   nodeDims: NodeDims;
   deleteBranch: (id: string) => void;
-  onConnectStart: (event: React.MouseEvent | React.TouchEvent, params: OnConnectStartParams) => void;
+  onConnectStart: (
+    event: React.MouseEvent | React.TouchEvent,
+    params: OnConnectStartParams
+  ) => void;
   onConnectEnd: (event: MouseEvent | TouchEvent) => void;
 };
 export const Flow: React.FC<FlowProps> = (props) => {
@@ -354,7 +246,16 @@ export const Flow: React.FC<FlowProps> = (props) => {
   const [edges, setEdges, onEdgesChangeDefault] = useEdgesState<Edge[]>(
     props.flowEdges
   );
-  const { fitView, zoomIn, zoomOut, setCenter, getNodes, getViewport, setViewport, zoomTo } = useReactFlow();
+  const {
+    fitView,
+    zoomIn,
+    zoomOut,
+    setCenter,
+    getNodes,
+    getViewport,
+    setViewport,
+    zoomTo,
+  } = useReactFlow();
   const [currentZoom, setCurrentZoom] = useState(getViewport().zoom);
 
   // when props.flowNodes changes, then I need to call setNodes
@@ -373,15 +274,12 @@ export const Flow: React.FC<FlowProps> = (props) => {
   // console.log("props.flowNodes", props.flowNodes)
   // console.log("nodes", nodes)
 
-  const laid = React.useMemo(
-    () => {
-      // No filtering: Pass all nodes to layoutElements.
-      // It will use defaults if dims aren't ready.
-      // The useMemo dependency on props.nodeDims will trigger re-layout when dimensions update.
-      return layoutElements(nodes, edges, props.nodeDims);
-    },
-    [nodes, edges, props.nodeDims]
-  );
+  const laid = React.useMemo(() => {
+    // No filtering: Pass all nodes to layoutElements.
+    // It will use defaults if dims aren't ready.
+    // The useMemo dependency on props.nodeDims will trigger re-layout when dimensions update.
+    return layoutElements(nodes, edges, props.nodeDims);
+  }, [nodes, edges, props.nodeDims]);
 
   // --- Custom Control Handlers ---
   const handleZoomIn = useCallback(() => {
@@ -396,23 +294,25 @@ export const Flow: React.FC<FlowProps> = (props) => {
     fitView({ duration: 300, padding: 0.1 });
   }, [fitView]);
 
-  const handleCenterNode = useCallback((nodeId: string | null) => {
-    if (!nodeId) return;
-    const allNodes = getNodes();
-    const node = allNodes.find((n) => n.id === nodeId);
-    if (node) {
+  const handleCenterNode = useCallback(
+    (nodeId: string | null) => {
+      if (!nodeId) return;
+      const allNodes = getNodes();
+      const node = allNodes.find((n) => n.id === nodeId);
+      if (node) {
         const x = node.position.x + (node.width ?? 0) / 2;
         const y = node.position.y + (node.height ?? 0) / 2;
         setCenter(x, y, { zoom: 1, duration: 500 });
-    } else {
+      } else {
         console.warn(`Node with ID ${nodeId} not found for centering.`);
-    }
-  }, [getNodes, setCenter]);
-
+      }
+    },
+    [getNodes, setCenter]
+  );
 
   const handleCenterFirst = useCallback(() => {
     // The initial seed question node consistently has the ID 'q-0'
-    handleCenterNode('q-0');
+    handleCenterNode("q-0");
   }, [getNodes, handleCenterNode]);
 
   const handleCenterLast = useCallback(() => {
@@ -427,7 +327,7 @@ export const Flow: React.FC<FlowProps> = (props) => {
   // Update slider when viewport changes
   useEffect(() => {
     const updateZoomState = () => {
-        setCurrentZoom(getViewport().zoom);
+      setCurrentZoom(getViewport().zoom);
     };
     // Hook into viewport changes if possible, otherwise poll (less ideal)
     // React Flow doesn't have a direct onViewportChange prop on the main component,
@@ -437,11 +337,14 @@ export const Flow: React.FC<FlowProps> = (props) => {
     setCurrentZoom(getViewport().zoom);
   }, [nodes, edges, getViewport]); // Update zoom state based on graph changes or viewport getter ref
 
-  const handleZoomSliderChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleZoomSliderChange = useCallback(
+    (event: React.ChangeEvent<HTMLInputElement>) => {
       const newZoom = parseFloat(event.target.value);
       zoomTo(newZoom, { duration: 50 }); // Use zoomTo for smoother slider interaction
       setCurrentZoom(newZoom); // Update slider state immediately
-  }, [zoomTo]);
+    },
+    [zoomTo]
+  );
   // --- End Custom Control Handlers ---
 
   // --- Define Min/Max Zoom for Slider ---
@@ -472,34 +375,54 @@ export const Flow: React.FC<FlowProps> = (props) => {
       <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 z-10 flex flex-col items-center p-2 bg-gray-800 bg-opacity-70 rounded-lg shadow-lg space-y-2">
         {/* Icon Buttons Row */}
         <div className="flex flex-row space-x-2">
-           <button title="Center First Node" onClick={handleCenterFirst} className="p-2 text-white bg-gray-600 hover:bg-gray-500 rounded-md transition-colors duration-150">
-               <HomeIcon className="w-4 h-4" />
-           </button>
-           <button title="Zoom In" onClick={handleZoomIn} className="p-2 text-white bg-gray-600 hover:bg-gray-500 rounded-md transition-colors duration-150">
-               <MagnifyingGlassPlusIcon className="w-4 h-4" />
-           </button>
-           <button title="Reset Zoom" onClick={handleFitView} className="p-2 text-white bg-gray-600 hover:bg-gray-500 rounded-md transition-colors duration-150">
-               <ArrowsPointingOutIcon className="w-4 h-4" />
-           </button>
-           <button title="Zoom Out" onClick={handleZoomOut} className="p-2 text-white bg-gray-600 hover:bg-gray-500 rounded-md transition-colors duration-150">
-               <MagnifyingGlassMinusIcon className="w-4 h-4" />
-           </button>
-           <button title="Center Last Node" onClick={handleCenterLast} className="p-2 text-white bg-gray-600 hover:bg-gray-500 rounded-md transition-colors duration-150">
-               <CursorArrowRaysIcon className="w-4 h-4" />
-           </button>
+          <button
+            title="Center First Node"
+            onClick={handleCenterFirst}
+            className="p-2 text-white bg-gray-600 hover:bg-gray-500 rounded-md transition-colors duration-150"
+          >
+            <HomeIcon className="w-4 h-4" />
+          </button>
+          <button
+            title="Zoom In"
+            onClick={handleZoomIn}
+            className="p-2 text-white bg-gray-600 hover:bg-gray-500 rounded-md transition-colors duration-150"
+          >
+            <MagnifyingGlassPlusIcon className="w-4 h-4" />
+          </button>
+          <button
+            title="Reset Zoom"
+            onClick={handleFitView}
+            className="p-2 text-white bg-gray-600 hover:bg-gray-500 rounded-md transition-colors duration-150"
+          >
+            <ArrowsPointingOutIcon className="w-4 h-4" />
+          </button>
+          <button
+            title="Zoom Out"
+            onClick={handleZoomOut}
+            className="p-2 text-white bg-gray-600 hover:bg-gray-500 rounded-md transition-colors duration-150"
+          >
+            <MagnifyingGlassMinusIcon className="w-4 h-4" />
+          </button>
+          <button
+            title="Center Last Node"
+            onClick={handleCenterLast}
+            className="p-2 text-white bg-gray-600 hover:bg-gray-500 rounded-md transition-colors duration-150"
+          >
+            <CursorArrowRaysIcon className="w-4 h-4" />
+          </button>
         </div>
         {/* Zoom Slider Row */}
         <div className="w-full px-2">
-           <input
-               type="range"
-               min={minZoomSlider}
-               max={maxZoomSlider}
-               step="0.05"
-               value={currentZoom}
-               onChange={handleZoomSliderChange}
-               className="w-full h-1 bg-gray-500 rounded-lg appearance-none cursor-pointer range-sm dark:bg-gray-700 accent-blue-500" // Basic styling, can be customized further
-               title={`Zoom: ${currentZoom.toFixed(2)}`}
-            />
+          <input
+            type="range"
+            min={minZoomSlider}
+            max={maxZoomSlider}
+            step="0.05"
+            value={currentZoom}
+            onChange={handleZoomSliderChange}
+            className="w-full h-1 bg-gray-500 rounded-lg appearance-none cursor-pointer range-sm dark:bg-gray-700 accent-blue-500" // Basic styling, can be customized further
+            title={`Zoom: ${currentZoom.toFixed(2)}`}
+          />
         </div>
       </div>
     </div>
@@ -526,3 +449,23 @@ export const FlowProvider: React.FC<FlowProviderProps> = (props) => {
     </ReactFlowProvider>
   );
 };
+
+// Global declaration (should be correct)
+declare global {
+  interface Window {
+    openai: (
+      prompt: string,
+      opts: {
+        model: string;
+        temperature: number;
+        nodeId: string;
+        onChunk: (chunk: string) => void;
+      }
+    ) => Promise<void>;
+  }
+}
+
+// Directly assign openai_server to window.openai
+if (typeof window !== "undefined") {
+  window.openai = openai_server;
+}

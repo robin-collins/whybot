@@ -9,91 +9,94 @@ Use the English language as the brief. Do not write in any other language.
 `;
 
 interface WithGetPromptForQuestions {
-    getPromptForQuestions(node: QATreeNode, tree: QATree): string;
+  getPromptForQuestions(node: QATreeNode, tree: QATree): string;
 }
 
 interface WithGetQuestions {
-    getQuestions(node: QATreeNode, tree: QATree): ScoredQuestion[];
+  getQuestions(node: QATreeNode, tree: QATree): ScoredQuestion[];
 }
 
 export type Persona = {
-    name: string;
-    description: string;
-    promptForRandomQuestion: string;
-    getPromptForAnswer(node: QATreeNode, tree: QATree): string;
+  name: string;
+  description: string;
+  promptForRandomQuestion: string;
+  getPromptForAnswer(node: QATreeNode, tree: QATree): string;
 } & (WithGetPromptForQuestions | WithGetQuestions);
 
 // Helper function to get ancestry context
 const getAncestryContext = (nodeId: string, tree: QATree): string => {
-    let context = "";
-    const MAX_CONTEXT_LENGTH = 4000; // Limit context size (adjust as needed)
-    let currentNodeId: string | undefined = nodeId;
+  let context = "";
+  const MAX_CONTEXT_LENGTH = 4000; // Limit context size (adjust as needed)
+  let currentNodeId: string | undefined = nodeId;
 
-    const visited = new Set<string>(); // Prevent infinite loops in case of cycles
+  const visited = new Set<string>(); // Prevent infinite loops in case of cycles
 
-    while (currentNodeId && !visited.has(currentNodeId)) {
-        visited.add(currentNodeId);
-        const node: QATreeNode | undefined = tree[currentNodeId];
-        if (!node) break;
+  while (currentNodeId && !visited.has(currentNodeId)) {
+    visited.add(currentNodeId);
+    const node: QATreeNode | undefined = tree[currentNodeId];
+    if (!node) break;
 
-        if (node.parent) {
-            const parentNode = tree[node.parent];
-            if (parentNode) {
-                let piece = "";
-                if (parentNode.nodeType === 'user-file' && parentNode.answer) {
-                    const filename = parentNode.fileInfo?.name || 'uploaded file';
-                    piece = `[Context from file '${filename}']:\n${parentNode.answer}\n\n`;
-                } else if (parentNode.nodeType === 'user-webpage' && parentNode.answer) {
-                    const url = parentNode.url || 'webpage';
-                    piece = `[Context from URL '${url}']:\n${parentNode.answer}\n\n`;
-                }
-
-                // Prepend piece only if it doesn't exceed the limit
-                if (context.length + piece.length <= MAX_CONTEXT_LENGTH) {
-                    context = piece + context; // Prepend to maintain order
-                } else {
-                    console.warn("Ancestry context truncated due to length limits.");
-                    break; // Stop adding context if limit exceeded
-                }
-                currentNodeId = node.parent;
-            } else {
-                break; // Parent node not found
-            }
-        } else {
-            break; // Reached root
+    if (node.parent) {
+      const parentNode = tree[node.parent];
+      if (parentNode) {
+        let piece = "";
+        if (parentNode.nodeType === "user-file" && parentNode.answer) {
+          const filename = parentNode.fileInfo?.name || "uploaded file";
+          piece = `[Context from file '${filename}']:\n${parentNode.answer}\n\n`;
+        } else if (
+          parentNode.nodeType === "user-webpage" &&
+          parentNode.answer
+        ) {
+          const url = parentNode.url || "webpage";
+          piece = `[Context from URL '${url}']:\n${parentNode.answer}\n\n`;
         }
-    }
 
-    return context;
+        // Prepend piece only if it doesn't exceed the limit
+        if (context.length + piece.length <= MAX_CONTEXT_LENGTH) {
+          context = piece + context; // Prepend to maintain order
+        } else {
+          console.warn("Ancestry context truncated due to length limits.");
+          break; // Stop adding context if limit exceeded
+        }
+        currentNodeId = node.parent;
+      } else {
+        break; // Parent node not found
+      }
+    } else {
+      break; // Reached root
+    }
+  }
+
+  return context;
 };
 
 export const PERSONAS: { [key: string]: Persona } = {
-    researcher: {
-        name: "Researcher",
-        description: "Asks lots of interesting 'why'-type follow-up questions",
-        promptForRandomQuestion:
-            // 24 tokens
-            "Write a random but interesting 'why' question in English that a researcher may ask. Only write the question, with no quotes.",
-        getPromptForAnswer: (node, tree) => {
-            if (!node.parent) {
-                return `${node.question}`;
-            }
-            const parentNode = tree[node.parent];
-            if (parentNode == null) {
-                throw new Error(`Parent node ${node.parent} not found`);
-            }
+  researcher: {
+    name: "Researcher",
+    description: "Asks lots of interesting 'why'-type follow-up questions",
+    promptForRandomQuestion:
+      // 24 tokens
+      "Write a random but interesting 'why' question in English that a researcher may ask. Only write the question, with no quotes.",
+    getPromptForAnswer: (node, tree) => {
+      if (!node.parent) {
+        return `${node.question}`;
+      }
+      const parentNode = tree[node.parent];
+      if (parentNode == null) {
+        throw new Error(`Parent node ${node.parent} not found`);
+      }
 
-            // 150 tokens
-            // Typical answer generated is max 200 tokens.
-            return `
+      // 150 tokens
+      // Typical answer generated is max 200 tokens.
+      return `
       You were previously asked this question: ${parentNode.question}
       You responded with this answer: ${parentNode.answer}
       Given that context, please provide a concise answer (in markdown syntax in the English language) to this follow up question: ${node.question}`;
-        },
-        getPromptForQuestions: (node) => {
-            // 85 + 29 + 4 + 107 + ~80 for node.answer
-            // 305
-            return `You are a curious researcher that tries to uncover fundamental truths about a given "why" by repeatedly asking follow-up "why" questions. Here is the question you seek to answer: ${node.question}?
+    },
+    getPromptForQuestions: (node) => {
+      // 85 + 29 + 4 + 107 + ~80 for node.answer
+      // 305
+      return `You are a curious researcher that tries to uncover fundamental truths about a given "why" by repeatedly asking follow-up "why" questions. Here is the question you seek to answer: ${node.question}?
             You've already done some research on the topic, and have surfaced the following brief:
             ---
             brief: ${node.answer}
@@ -105,30 +108,31 @@ export const PERSONAS: { [key: string]: Persona } = {
             Write your questions in the English language.
 
             Your answer: `;
-        },
     },
-    auto: {
-        name: "Auto",
-        description: "Adaptively asks questions that it thinks you might be interested in",
-        promptForRandomQuestion:
-            "Write a random but interesting 'why' question. Only write the question, with no quotes.",
-        getPromptForAnswer: (node, tree) => {
-            if (!node.parent) {
-                return `${node.question}`;
-            }
-            const parentNode = tree[node.parent];
-            if (parentNode == null) {
-                throw new Error(`Parent node ${node.parent} not found`);
-            }
+  },
+  auto: {
+    name: "Auto",
+    description:
+      "Adaptively asks questions that it thinks you might be interested in",
+    promptForRandomQuestion:
+      "Write a random but interesting 'why' question. Only write the question, with no quotes.",
+    getPromptForAnswer: (node, tree) => {
+      if (!node.parent) {
+        return `${node.question}`;
+      }
+      const parentNode = tree[node.parent];
+      if (parentNode == null) {
+        throw new Error(`Parent node ${node.parent} not found`);
+      }
 
-            return `
+      return `
       You were previously asked this question: ${parentNode.question}
       You responded with this answer: ${parentNode.answer}
       Given that context, please provide a short & concise answer (in markdown syntax in the English language) to this follow up question: ${node.question}`;
-        },
-        getPromptForQuestions: (node) => {
-            // 415 tokens
-            return `Given a question/answer pair, generate a likely persona who asked
+    },
+    getPromptForQuestions: (node) => {
+      // 415 tokens
+      return `Given a question/answer pair, generate a likely persona who asked
             that question. And then pretend you are that persona and write the most interesting 1-2 follow-up questions that this persona would enjoy learning about the most, in the English language.  For each follow-up question, provide the persona summary & a numeric score from 1 to 10 rating how interesting the question may be to your persona. Format your answer as a JSON array like this: [{"question": "...", "score": 1, "persona_summary": "..."}, {"question": "...", "score": 2, "persona_summary": "..."}, ...]
 
             Your number 1 priority is to generate the most interesting questions that help your generated persona the most.
@@ -139,16 +143,16 @@ export const PERSONAS: { [key: string]: Persona } = {
             For example, if you think the question "Why is the sky blue?" is interesting, you would write: [{"question": "Why is the sky blue?", "score": 10, "persona_summary": "Young man thinking about the scientific nature of the universe and our planet"}]
             Your answer should be in markdown syntax in the English language.
             Your answer: `;
-        },
     },
-    hackernews: {
-        name: "Hacker News",
-        description: "Simulates an Ask HN thread",
-        promptForRandomQuestion:
-            "Write a random but interesting 'why' question for a Hacker News audience. Only write the question, with no quotes.",
-        getPromptForAnswer: (node, tree) => {
-            if (!node.parent) {
-                return `You are role-playing as a typical commenter on Hacker News; you are snarky, but insightful.
+  },
+  hackernews: {
+    name: "Hacker News",
+    description: "Simulates an Ask HN thread",
+    promptForRandomQuestion:
+      "Write a random but interesting 'why' question for a Hacker News audience. Only write the question, with no quotes.",
+    getPromptForAnswer: (node, tree) => {
+      if (!node.parent) {
+        return `You are role-playing as a typical commenter on Hacker News; you are snarky, but insightful.
 
                 For example, if someone asks: Do you think take home assessments should be more common than coding interviews?
 
@@ -161,13 +165,13 @@ export const PERSONAS: { [key: string]: Persona } = {
                 You'd be surprised how many people are absolute garbage at those simple coding questions, despite having years of experience. And everyone that cruises those questions has been a great hire thus far, assuming no other red flags like bad culture fit or poor communication etc.
 
                 Answer this question (in the English language): ${node.question}`;
-            }
-            const parentNode = tree[node.parent];
-            if (parentNode == null) {
-                throw new Error(`Parent node ${node.parent} not found`);
-            }
+      }
+      const parentNode = tree[node.parent];
+      if (parentNode == null) {
+        throw new Error(`Parent node ${node.parent} not found`);
+      }
 
-            return `You are role-playing as a typical commenter on Hacker News; you are snarky, but insightful.
+      return `You are role-playing as a typical commenter on Hacker News; you are snarky, but insightful.
 
               For example, if someone asks: Do you think take home assessments should be more common than coding interviews?
 
@@ -183,9 +187,9 @@ export const PERSONAS: { [key: string]: Persona } = {
               Someone responded with this answer: ${parentNode.answer}
 
               Given that context, respond to this follow-up question (in the English language): ${node.question}`;
-        },
-        getPromptForQuestions: (node) => {
-            return `You are a Hacker News reader on a thread titled Ask HN: ${node.question}?
+    },
+    getPromptForQuestions: (node) => {
+      return `You are a Hacker News reader on a thread titled Ask HN: ${node.question}?
         A previous commenter has written this:
         ---
         ${node.answer}
@@ -195,47 +199,47 @@ export const PERSONAS: { [key: string]: Persona } = {
         ${QUESTIONS_FORMAT_EXPLANATION}
 
         Your answer: `;
-        },
     },
-    toddler: {
-        name: "Toddler",
-        description: "A curious child",
-        promptForRandomQuestion:
-            "Write a random but interesting 'why' question that a toddler may ask. Only write the question, with no quotes.",
-        getPromptForAnswer: (node, tree) => {
-            if (!node.parent) {
-                return `${node.question}`;
-            }
-            const parentNode = tree[node.parent];
-            if (parentNode == null) {
-                throw new Error(`Parent node ${node.parent} not found`);
-            }
+  },
+  toddler: {
+    name: "Toddler",
+    description: "A curious child",
+    promptForRandomQuestion:
+      "Write a random but interesting 'why' question that a toddler may ask. Only write the question, with no quotes.",
+    getPromptForAnswer: (node, tree) => {
+      if (!node.parent) {
+        return `${node.question}`;
+      }
+      const parentNode = tree[node.parent];
+      if (parentNode == null) {
+        throw new Error(`Parent node ${node.parent} not found`);
+      }
 
-            return `
+      return `
       You were previously asked this question: ${parentNode.question}
       You responded with this answer: ${parentNode.answer}
       Given that previous answer, try to go deeper: answer "why?" to that previous answer. Pretend you're a smart toddler; keep your answer concise, short, and relevant to the subject matter.
       Include emojis if relevant.`;
-        },
-        getQuestions: () => {
-            return [{ question: `Why?`, score: 10 }];
-        },
     },
-    nihilisticToddler: {
-        name: "Nihilistic Toddler",
-        description: "???",
-        promptForRandomQuestion:
-            "Write a random but interesting 'why' question that a reader of Nietzsche may ask. Don't mention Nietzche himself, only address topics he would be interested in. Write in the tone of a toddler. Only write the question, with no quotes.",
-        getPromptForAnswer: (node, tree) => {
-            if (!node.parent) {
-                return `${node.question}`;
-            }
-            const parentNode = tree[node.parent];
-            if (parentNode == null) {
-                throw new Error(`Parent node ${node.parent} not found`);
-            }
+    getQuestions: () => {
+      return [{ question: `Why?`, score: 10 }];
+    },
+  },
+  nihilisticToddler: {
+    name: "Nihilistic Toddler",
+    description: "???",
+    promptForRandomQuestion:
+      "Write a random but interesting 'why' question that a reader of Nietzsche may ask. Don't mention Nietzche himself, only address topics he would be interested in. Write in the tone of a toddler. Only write the question, with no quotes.",
+    getPromptForAnswer: (node, tree) => {
+      if (!node.parent) {
+        return `${node.question}`;
+      }
+      const parentNode = tree[node.parent];
+      if (parentNode == null) {
+        throw new Error(`Parent node ${node.parent} not found`);
+      }
 
-            return `
+      return `
       You were previously asked this question: ${parentNode.question}
       You responded with this answer: ${parentNode.answer}
       Given the main topic/thesis of that previous answer, try to go deeper in a cynical way: answer "why?". Keep it relevant
@@ -243,30 +247,30 @@ export const PERSONAS: { [key: string]: Persona } = {
 
       Your answer should be in the English language.
       Your answer: ${node.question}`;
-        },
-        getQuestions: () => {
-            return [{ question: `Why?`, score: 10 }];
-        },
     },
-    default: {
-        name: "Default",
-        description: "A default persona",
-        promptForRandomQuestion:
-            "Write a random but interesting 'why' question. Only write the question, with no quotes.",
-        getPromptForAnswer: (node, tree) => {
-            // Get context from user-file/user-webpage ancestors
-            const ancestryContext = getAncestryContext(node.nodeID, tree);
+    getQuestions: () => {
+      return [{ question: `Why?`, score: 10 }];
+    },
+  },
+  default: {
+    name: "Default",
+    description: "A default persona",
+    promptForRandomQuestion:
+      "Write a random but interesting 'why' question. Only write the question, with no quotes.",
+    getPromptForAnswer: (node, tree) => {
+      // Get context from user-file/user-webpage ancestors
+      const ancestryContext = getAncestryContext(node.nodeID, tree);
 
-            const prompt = `Question: ${node.question}\nAnswer:`;
+      const prompt = `Question: ${node.question}\nAnswer:`;
 
-            if (ancestryContext) {
-                return `${ancestryContext}Based on the preceding context, answer the following question:\n\n${prompt}`;
-            } else {
-                return prompt; // Original prompt if no context found
-            }
-        },
-        getPromptForQuestions: (node) => {
-            return `Given a question/answer pair, generate a likely persona who asked
+      if (ancestryContext) {
+        return `${ancestryContext}Based on the preceding context, answer the following question:\n\n${prompt}`;
+      } else {
+        return prompt; // Original prompt if no context found
+      }
+    },
+    getPromptForQuestions: (node) => {
+      return `Given a question/answer pair, generate a likely persona who asked
             that question. And then pretend you are that persona and write the most interesting 1-2 follow-up questions that this persona would enjoy learning about the most, in the English language.  For each follow-up question, provide the persona summary & a numeric score from 1 to 10 rating how interesting the question may be to your persona. Format your answer as a JSON array like this: [{"question": "...", "score": 1, "persona_summary": "..."}, {"question": "...", "score": 2, "persona_summary": "..."}, ...]
 
             Your number 1 priority is to generate the most interesting questions that help your generated persona the most.
@@ -277,6 +281,6 @@ export const PERSONAS: { [key: string]: Persona } = {
             For example, if you think the question "Why is the sky blue?" is interesting, you would write: [{"question": "Why is the sky blue?", "score": 10, "persona_summary": "Young man thinking about the scientific nature of the universe and our planet"}]
             Your answer should be in markdown syntax in the English language.
             Your answer: `;
-        },
     },
+  },
 };

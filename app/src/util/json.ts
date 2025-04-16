@@ -1,10 +1,10 @@
 export function closePartialJson(jsonString: string): string {
   let output = "";
-  let bracketStack: string[] = [];
+  const bracketStack: string[] = [];
 
   for (let i = 0; i < jsonString.length; i++) {
-    let currentChar = jsonString.charAt(i);
-    let prevChar = jsonString.charAt(i - 1);
+    const currentChar = jsonString.charAt(i);
+    const prevChar = jsonString.charAt(i - 1);
 
     if (currentChar === "{" || currentChar === "[") {
       bracketStack.push(currentChar);
@@ -14,7 +14,7 @@ export function closePartialJson(jsonString: string): string {
         continue;
       }
 
-      let matchingOpeningBracket = bracketStack.pop();
+      const matchingOpeningBracket = bracketStack.pop();
       if (
         (currentChar === "}" && matchingOpeningBracket !== "{") ||
         (currentChar === "]" && matchingOpeningBracket !== "[")
@@ -23,7 +23,7 @@ export function closePartialJson(jsonString: string): string {
         continue;
       }
     } else if (currentChar === '"' && prevChar !== "\\") {
-      let lastBracket = bracketStack[bracketStack.length - 1];
+      const lastBracket = bracketStack[bracketStack.length - 1];
       if (lastBracket === '"') {
         bracketStack.pop();
       } else {
@@ -38,7 +38,7 @@ export function closePartialJson(jsonString: string): string {
   }
 
   while (bracketStack.length > 0) {
-    let bracket = bracketStack.pop();
+    const bracket = bracketStack.pop();
     if (bracket === "{") {
       output += "}";
     } else if (bracket === "[") {

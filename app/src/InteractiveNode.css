@@ -1,54 +1,58 @@
 /* Add styles for InteractiveNode.css */
 
 .interactive-node {
-    /* Base styling for all nodes */
-    position: relative;
-    transition: opacity 0.15s, border 0.15s, box-shadow 0.15s;
+  /* Base styling for all nodes */
+  position: relative;
+  transition: opacity 0.15s, border 0.15s, box-shadow 0.15s;
 }
 
 .node-content-wrapper {
-    /* Ensure content scrolls within the node */
-    width: 100%;
+  /* Ensure content scrolls within the node */
+  width: 100%;
 }
 
 /* Style for the file upload drop zone */
 .interactive-node input[type="file"] + label {
-    display: block;
-    text-align: center;
-    transition: border-color 0.2s;
+  display: block;
+  text-align: center;
+  transition: border-color 0.2s;
 }
 
 /* Style for inputs within the node */
 .interactive-node input[type="text"],
 .interactive-node input[type="url"],
 .interactive-node textarea {
-    font-size: 0.875rem; /* text-sm */
-    line-height: 1.25rem;
-    margin-top: 4px;
-    margin-bottom: 4px;
+  font-size: 0.875rem; /* text-sm */
+  line-height: 1.25rem;
+  margin-top: 4px;
+  margin-bottom: 4px;
 }
 
 /* Tailwind prose adjustments if needed */
 .interactive-node .prose {
-    /* Example: Override default prose link color if needed */
-    /* --tw-prose-links: theme('colors.blue.600'); */
+  /* Example: Override default prose link color if needed */
+  /* --tw-prose-links: theme('colors.blue.600'); */
 }
 
 /* Ensure handles are visible */
 .react-flow__handle {
-    opacity: 0.6;
-    transition: opacity 0.2s;
+  opacity: 0.6;
+  transition: opacity 0.2s;
 }
 .react-flow__handle:hover {
-    opacity: 1;
+  opacity: 1;
 }
 
 /* Specific styles for node types if needed */
-.interactive-node.border-sky-400 { /* Questions */
+.interactive-node.border-sky-400 {
+  /* Questions */
 }
-.interactive-node.border-green-400 { /* Answers */
+.interactive-node.border-green-400 {
+  /* Answers */
 }
-.interactive-node.border-purple-400 { /* Files */
+.interactive-node.border-purple-400 {
+  /* Files */
 }
-.interactive-node.border-orange-400 { /* Webpages */
+.interactive-node.border-orange-400 {
+  /* Webpages */
 }

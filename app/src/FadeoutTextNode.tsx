@@ -55,17 +55,19 @@ export const FadeoutTextNode: React.FC<FadeoutTextNodeProps> = (props) => {
   const targetMaxWidth = isLongAnswer ? 500 : 250;
 
   const [ref, bounds] = useMeasure();
-  const [maxNodeHeightPx, setMaxNodeHeightPx] = useState(window.innerHeight * 0.99);
+  const [maxNodeHeightPx, setMaxNodeHeightPx] = useState(
+    window.innerHeight * 0.99
+  );
 
   useEffect(() => {
     const handleResize = () => {
       setMaxNodeHeightPx(window.innerHeight * 0.99);
     };
-    window.addEventListener('resize', handleResize);
+    window.addEventListener("resize", handleResize);
     // Initial calculation
     handleResize();
     // Cleanup listener on unmount
-    return () => window.removeEventListener('resize', handleResize);
+    return () => window.removeEventListener("resize", handleResize);
   }, []);
 
   const [expanded, setExpanded] = useState(
@@ -80,37 +82,58 @@ export const FadeoutTextNode: React.FC<FadeoutTextNodeProps> = (props) => {
       const currentActualHeight = bounds.height / scaleFactor;
       const currentWidth = bounds.width / scaleFactor;
       const verticalPaddingAndBorder = 16 + 6; // 8px padding top/bottom + 3px border top/bottom
-      const buttonHeight = props.data.question && !props.data.hasAnswer ? 28 : 0; // Approx button height
-      const baseCalculatedHeight = currentActualHeight + verticalPaddingAndBorder + buttonHeight;
+      const buttonHeight =
+        props.data.question && !props.data.hasAnswer ? 28 : 0; // Approx button height
+      const baseCalculatedHeight =
+        currentActualHeight + verticalPaddingAndBorder + buttonHeight;
 
       // Cap the height at the calculated max viewport height
       const reportedHeight = Math.min(baseCalculatedHeight, maxNodeHeightPx);
 
       props.data.setNodeDims((prevState) => ({
         ...prevState,
-        [props.data.nodeID]: { width: Math.max(currentWidth, targetMaxWidth), height: reportedHeight }, // Use measured or target width, capped height
+        [props.data.nodeID]: {
+          width: Math.max(currentWidth, targetMaxWidth),
+          height: reportedHeight,
+        }, // Use measured or target width, capped height
       }));
     }
     // Depend on bounds.width and bounds.height, expanded state, and scale factor
-  }, [bounds.width, bounds.height, expanded, props.data.setNodeDims, props.data.nodeID, props.data.question, props.data.hasAnswer, targetMaxWidth, maxNodeHeightPx, getScaleFactor]);
+  }, [
+    bounds.width,
+    bounds.height,
+    expanded,
+    props.data.setNodeDims,
+    props.data.nodeID,
+    props.data.question,
+    props.data.hasAnswer,
+    targetMaxWidth,
+    maxNodeHeightPx,
+    getScaleFactor,
+  ]);
 
   // Calculate the actual height to apply to the style, considering expansion and max height
   const scaleFactor = getScaleFactor();
   const currentScaledContentHeight = bounds.height / scaleFactor;
   const verticalPaddingAndBorder = 16 + 6; // 8px padding top/bottom + 3px border top/bottom
   const buttonHeight = props.data.question && !props.data.hasAnswer ? 28 : 0;
-  const fullCalculatedHeight = currentScaledContentHeight + verticalPaddingAndBorder + buttonHeight;
+  const fullCalculatedHeight =
+    currentScaledContentHeight + verticalPaddingAndBorder + buttonHeight;
   const cappedHeight = Math.min(fullCalculatedHeight, maxNodeHeightPx);
 
-  const appliedHeight = props.data.question && !props.data.hasAnswer
-    ? expanded
-      ? cappedHeight // Use capped height when expanded
-      : Math.min(140 + verticalPaddingAndBorder + buttonHeight, fullCalculatedHeight) // Collapsed question: min of 140 or actual needed height
-    : expanded
+  const appliedHeight =
+    props.data.question && !props.data.hasAnswer
+      ? expanded
+        ? cappedHeight // Use capped height when expanded
+        : Math.min(
+            140 + verticalPaddingAndBorder + buttonHeight,
+            fullCalculatedHeight
+          ) // Collapsed question: min of 140 or actual needed height
+      : expanded
       ? cappedHeight // Use capped height when expanded
       : props.data.question
-        ? Math.min(140 + verticalPaddingAndBorder, fullCalculatedHeight) // Collapsed question (already answered): min of 140 or actual needed height
-        : 'auto'; // Answer node collapsed (should not happen often with auto-expand)
+      ? Math.min(140 + verticalPaddingAndBorder, fullCalculatedHeight) // Collapsed question (already answered): min of 140 or actual needed height
+      : "auto"; // Answer node collapsed (should not happen often with auto-expand)
 
   const { focusedId, setFocusedId, isInFocusedBranch } = useFocused();
 
@@ -122,7 +145,7 @@ export const FadeoutTextNode: React.FC<FadeoutTextNodeProps> = (props) => {
         }
         // Only trigger expansion on click, dimension update is handled by useEffect
         if (!expanded) {
-           setExpanded(true);
+          setExpanded(true);
         }
       }}
       onMouseDown={(e) => {
@@ -148,7 +171,8 @@ export const FadeoutTextNode: React.FC<FadeoutTextNodeProps> = (props) => {
         height: appliedHeight,
         transition:
           "transform 0.5s, height 0.5s, width 0.5s, max-width 0.5s, opacity 0.15s, border 0.15s",
-        paddingBottom: props.data.question && !props.data.hasAnswer ? "36px" : "8px",
+        paddingBottom:
+          props.data.question && !props.data.hasAnswer ? "36px" : "8px",
       }}
     >
       <Handle type={"target"} position={Position.Left} />
@@ -163,9 +187,11 @@ export const FadeoutTextNode: React.FC<FadeoutTextNodeProps> = (props) => {
           }
         )}
         style={{
-          height: '100%', // Allow inner div to fill parent's height
-          overflowY: 'auto', // Add vertical scroll when needed
-          ...(expanded || !props.data.question ? { WebkitMaskImage: "none" } : {})
+          height: "100%", // Allow inner div to fill parent's height
+          overflowY: "auto", // Add vertical scroll when needed
+          ...(expanded || !props.data.question
+            ? { WebkitMaskImage: "none" }
+            : {}),
         }}
       >
         <div ref={ref} className="[&>*:first-child]:mt-0">
@@ -174,27 +200,35 @@ export const FadeoutTextNode: React.FC<FadeoutTextNodeProps> = (props) => {
           </ReactMarkdown>
         </div>
       </div>
-      {props.data.question && !props.data.hasAnswer && props.data.onGenerateAnswer && (
-        <button
-          disabled={props.data.isAnswering}
-          onClick={(e) => {
-            e.stopPropagation();
-            if (props.data.onGenerateAnswer) {
-              props.data.onGenerateAnswer(props.data.nodeID.slice(2));
-            }
-          }}
-          className={classNames(
-            "absolute bottom-1 right-1 text-white px-2 py-0.5 rounded text-xs z-10",
-            {
-              "bg-green-600 hover:bg-green-700 cursor-wait": props.data.isAnswering,
-              "bg-sky-600 hover:bg-sky-700 cursor-pointer": !props.data.isAnswering,
-            }
-          )}
-          style={{ fontSize: '0.7rem', lineHeight: '1rem', padding: '2px 6px'}}
-        >
-          {props.data.isAnswering ? "Answering..." : "Answer"}
-        </button>
-      )}
+      {props.data.question &&
+        !props.data.hasAnswer &&
+        props.data.onGenerateAnswer && (
+          <button
+            disabled={props.data.isAnswering}
+            onClick={(e) => {
+              e.stopPropagation();
+              if (props.data.onGenerateAnswer) {
+                props.data.onGenerateAnswer(props.data.nodeID.slice(2));
+              }
+            }}
+            className={classNames(
+              "absolute bottom-1 right-1 text-white px-2 py-0.5 rounded text-xs z-10",
+              {
+                "bg-green-600 hover:bg-green-700 cursor-wait":
+                  props.data.isAnswering,
+                "bg-sky-600 hover:bg-sky-700 cursor-pointer":
+                  !props.data.isAnswering,
+              }
+            )}
+            style={{
+              fontSize: "0.7rem",
+              lineHeight: "1rem",
+              padding: "2px 6px",
+            }}
+          >
+            {props.data.isAnswering ? "Answering..." : "Answer"}
+          </button>
+        )}
     </div>
   );
 };

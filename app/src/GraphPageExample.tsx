@@ -1,10 +1,23 @@
-import { useEffect, useMemo, useState, Dispatch, SetStateAction } from "react";
-import { FlowProvider } from "./Flow";
+import {
+  useEffect,
+  useMemo,
+  useState,
+  Dispatch,
+  SetStateAction,
+  useCallback,
+} from "react";
+import { FlowProvider, Flow } from "./Flow";
 import { convertTreeToFlow } from "./GraphPage";
-import { QATree, NodeDims } from "./types";
+import { QATree, NodeDims, QATreeNode, NodeType } from "./types";
 import { ArrowLeftIcon } from "@heroicons/react/24/solid";
 import { Example } from "./StartPage";
 import "./GraphPageExample.css";
+import { OnConnectStartParams } from "reactflow";
+import { ArrowDownTrayIcon } from "@heroicons/react/24/solid";
+import { downloadDataAsJson } from "./util/json";
+import { SERVER_HOST } from "./constants";
+import { MODELS } from "./models";
+import { PERSONAS } from "./personas";
 
 export const streamQuestion = async (
   id: string,
@@ -60,17 +73,16 @@ export const streamQANode = async (
   setResultTree: Dispatch<SetStateAction<QATree>>
 ): Promise<string> => {
   return new Promise(async (resolve) => {
-    // reference text
     const node = exampleTree[id];
 
     if (!(id in growingTree)) {
       growingTree[id] = {
+        nodeID: id,
+        nodeType: node.nodeType,
         question: "",
         answer: "",
         parent: node.parent,
         children: node.children,
-        nodeType: node.nodeType,
-        nodeID: id,
       };
     }
 
@@ -112,8 +124,7 @@ type GraphPageExampleProps = {
   example: Example;
   onExit(): void;
 };
-// `exampleTree` holds the complete graph of the example
-// `resultTree` is actually rendered & grows over time to become `exampleTree`
+
 export function GraphPageExample({ example, onExit }: GraphPageExampleProps) {
   const [resultTree, setResultTree] = useState<QATree>({});
   const [nodeDims, setNodeDims] = useState<NodeDims>({});
@@ -121,35 +132,90 @@ export function GraphPageExample({ example, onExit }: GraphPageExampleProps) {
     return convertTreeToFlow(
       resultTree,
       setNodeDims,
-      () => {},
-      false,
-      () => Promise.resolve(),
+      () => {
+        console.log("Delete branch requested (Example Mode - No-op)");
+      },
+      async (nodeId: string) => {
+        console.log(
+          `Generate answer requested for ${nodeId} (Example Mode - No-op)`
+        );
+      },
       new Set<string>(),
-      () => {},
-      () => {}
+      false
     );
-  }, [resultTree]);
+  }, [resultTree, setNodeDims]);
 
   useEffect(() => {
+    setResultTree({});
     streamExample(example, setResultTree);
   }, [example]);
 
+  const dummyDeleteBranch = useCallback((id: string) => {
+    console.log(`Dummy deleteBranch called for: ${id}`);
+  }, []);
+  const dummyOnConnectStart = useCallback(
+    (
+      event: React.MouseEvent | React.TouchEvent,
+      params: OnConnectStartParams
+    ) => {
+      console.log("Dummy onConnectStart called", params);
+    },
+    []
+  );
+  const dummyOnConnectEnd = useCallback((event: MouseEvent | TouchEvent) => {
+    console.log("Dummy onConnectEnd called");
+  }, []);
+
+  const currentModelInfo = MODELS[example.model];
+  const currentPersonaInfo = PERSONAS[example.persona];
+  const seedQuery =
+    resultTree["q-0"]?.question ?? resultTree["0"]?.question ?? "Example";
+
   return (
-    <div className="text-sm graph-page-example">
+    <div className="text-sm h-screen w-screen relative overflow-hidden">
       <FlowProvider
         flowNodes={nodes}
         flowEdges={edges}
         nodeDims={nodeDims}
-        deleteBranch={() => {}}
-        onConnectStart={() => {}}
-        onConnectEnd={() => {}}
+        deleteBranch={dummyDeleteBranch}
+        onConnectStart={dummyOnConnectStart}
+        onConnectEnd={dummyOnConnectEnd}
       />
+      <div className="fixed right-4 bottom-4 flex items-center space-x-2 z-20">
+        {SERVER_HOST.includes("localhost") && (
+          <div
+            className="bg-black/40 p-2 flex items-center justify-center rounded cursor-pointer hover:text-green-400 backdrop-blur"
+            onClick={() => {
+              if (!resultTree) return;
+              const filename = (seedQuery || "graph-export")
+                .toLowerCase()
+                .replace(/[^a-z0-9]+/g, "-")
+                .substring(0, 50);
+              const dict: any = {
+                version: "1.0.0",
+                persona: example.persona,
+                model: example.model,
+                seedQuery: seedQuery,
+                tree: resultTree,
+              };
+              downloadDataAsJson(dict, filename);
+            }}
+            title="Download Graph Data (JSON)"
+          >
+            <ArrowDownTrayIcon className="w-5 h-5" />
+          </div>
+        )}
+        <div className="bg-black/40 p-2 pl-3 rounded flex items-center space-x-3 backdrop-blur touch-none">
+          <div className="text-white/60 select-none">
+            {currentPersonaInfo?.name ?? example.persona} •{" "}
+            {currentModelInfo?.name ?? example.model}
+          </div>
+        </div>
+      </div>
       <div
-        onClick={() => {
-          console.log("boom");
-          onExit();
-        }}
-        className="absolute top-4 left-4 bg-black/40 rounded p-2 cursor-pointer hover:bg-black/60 backdrop-blur touch-none"
+        onClick={onExit}
+        className="fixed top-4 left-4 bg-black/40 rounded p-2 cursor-pointer hover:bg-black/60 backdrop-blur touch-none z-20"
+        title="Exit Example"
       >
         <ArrowLeftIcon className="w-5 h-5" />
       </div>
