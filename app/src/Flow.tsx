@@ -1,23 +1,49 @@
 import React, { useCallback, useEffect, useState } from "react";
 
-import ReactFlow, {
+// import ReactFlow, {
+//   Controls,
+//   MiniMap,
+//   Background,
+//   Edge,
+//   Node,
+//   Position,
+//   ReactFlowProvider,
+//   Viewport,
+//   useEdgesState,
+//   useNodesState,
+//   useReactFlow,
+//   OnConnectStartParams,
+// } from "reactflow";
+import dagre from "dagre";
+
+import {
   Controls,
   MiniMap,
   Background,
-  Edge,
-  Node,
   Position,
   ReactFlowProvider,
   Viewport,
-  useEdgesState,
-  useNodesState,
   useReactFlow,
   OnConnectStartParams,
-} from "reactflow";
-import dagre from "dagre";
+  ReactFlow,
+  addEdge,
+  useEdgesState,
+  useNodesState,
+  type Edge,
+  type OnConnect,
+  type Node,
+  NodeTypes,
+  EdgeTypes,
+  NodeProps,
+  OnConnectStart,
+} from '@xyflow/react';
+import '@xyflow/react/dist/style.css';
+// DevTools components
+import NodeInspector from './NodeInspector';
+import ChangeLogger from './ChangeLogger';
+import ViewportLogger from './ViewPortLogger';
 
-import "reactflow/dist/style.css";
-import { InteractiveNode } from "./InteractiveNode";
+import { InteractiveNode, InteractiveNodeData } from "./InteractiveNode";
 import { DeletableEdge } from "./DeletableEdge";
 import { NodeDims } from "./types";
 import { getFingerprint } from "./main";
@@ -33,78 +59,8 @@ import {
 } from "@heroicons/react/24/solid";
 // --- End Import Icons ---
 
-const nodeTypes = { interactiveNode: InteractiveNode };
-const edgeTypes = { deleteEdge: DeletableEdge };
-
-// Layout the nodes automatically
-const layoutElements = (
-  nodes: Node[],
-  edges: Edge[],
-  nodeDims: NodeDims,
-  direction = "LR"
-) => {
-  console.log("function layoutElements started");
-  const isHorizontal = direction === "LR";
-  const dagreGraph = new dagre.graphlib.Graph();
-  dagreGraph.setDefaultEdgeLabel(() => ({}));
-
-  // Filter nodes: Only include q-0 initially, or nodes with dimensions
-  // const nodesToLayout = nodes.filter(node =>
-  //   node.id === 'q-0' || node.id in nodeDims
-  // );
-  // Filter edges: Only include edges connecting nodes that are being laid out
-  // const nodeIdsToLayout = new Set(nodesToLayout.map(n => n.id));
-  // const edgesToLayout = edges.filter(edge =>
-  //     nodeIdsToLayout.has(edge.source) && nodeIdsToLayout.has(edge.target)
-  // );
-
-  const nodeWidth = 250;
-  const nodeHeight = 170;
-  dagreGraph.setGraph({ rankdir: direction, nodesep: 100 });
-
-  // Use all nodes passed in
-  nodes.forEach((node) => {
-    if (node.id in nodeDims) {
-      dagreGraph.setNode(node.id, {
-        width: nodeDims[node.id]["width"],
-        height: nodeDims[node.id]["height"],
-      });
-    } else {
-      // Use defaults if dims not available
-      dagreGraph.setNode(node.id, { width: nodeWidth, height: nodeHeight });
-    }
-  });
-
-  // Use all edges passed in
-  edges.forEach((edge) => {
-    dagreGraph.setEdge(edge.source, edge.target);
-  });
-
-  dagre.layout(dagreGraph);
-
-  // Map positions back to the original nodes array
-  nodes.forEach((node) => {
-    // Check if the node was actually processed by Dagre (it might not be if disconnected)
-    const nodeWithPosition = dagreGraph.node(node.id);
-    if (nodeWithPosition) {
-      node.targetPosition = isHorizontal ? Position.Left : Position.Top;
-      node.sourcePosition = isHorizontal ? Position.Right : Position.Bottom;
-
-      node.position = {
-        x: nodeWithPosition.x - nodeWithPosition.width / 2 + 60,
-        y: nodeWithPosition.y - nodeWithPosition.height / 2 + 60,
-      };
-    } else {
-      // Assign a default position if Dagre didn't handle it? Or leave as is?
-      // console.warn(`Node ${node.id} was not laid out by Dagre.`);
-    }
-  });
-
-  // Return original nodes/edges with updated positions
-  return { nodes, edges };
-  console.log("function layoutElements finished");
-  return { nodes, edges };
-};
+const nodeTypes: NodeTypes = { interactiveNode: InteractiveNode };
+const edgeTypes: EdgeTypes = { deleteEdge: DeletableEdge };
 
 export const openai_server = async (
   prompt: string,
@@ -225,7 +181,7 @@ export const openai_server = async (
       // then the closure was unexpected or due to an earlier onerror.
       // We might reject here if it wasn't clean and wasn't aborted.
       if (!isAborted && !event.wasClean) {
-          // Avoid rejecting if already resolved/rejected by 'done'/'error' message handling
+          // Avoid rejecting if already resolved/rejected by 'done'/'error' messages handling
           // This requires tracking promise state, which is complex.
           // Let's rely on 'done'/'error' messages for explicit completion/failure.
           console.warn(`WebSocket for node ${opts.nodeId} closed uncleanly without explicit done/error message.`);
@@ -257,18 +213,15 @@ type FlowProps = {
   flowEdges: Edge[];
   nodeDims: NodeDims;
   deleteBranch: (id: string) => void;
-  onConnectStart: (
-    event: React.MouseEvent | React.TouchEvent,
-    params: OnConnectStartParams
-  ) => void;
+  onConnectStart: OnConnectStart;
   onConnectEnd: (event: MouseEvent | TouchEvent) => void;
 };
 export const Flow: React.FC<FlowProps> = (props) => {
   console.log("function Flow started");
-  const [nodes, setNodes, onNodesChangeDefault] = useNodesState<Node[]>(
+  const [nodes, setNodes, onNodesChangeDefault] = useNodesState(
     props.flowNodes
   );
-  const [edges, setEdges, onEdgesChangeDefault] = useEdgesState<Edge[]>(
+  const [edges, setEdges, onEdgesChangeDefault] = useEdgesState(
     props.flowEdges
   );
   const {
@@ -283,28 +236,17 @@ export const Flow: React.FC<FlowProps> = (props) => {
   } = useReactFlow();
   const [currentZoom, setCurrentZoom] = useState(getViewport().zoom);
 
-  // when props.flowNodes changes, then I need to call setNodes
   useEffect(() => {
-    setNodes(() => {
-      return props.flowNodes;
-    });
+    setNodes(props.flowNodes);
   }, [props.flowNodes]);
 
   useEffect(() => {
-    setEdges(() => {
-      return props.flowEdges;
-    });
+    setEdges(props.flowEdges);
   }, [props.flowEdges]);
 
-  // console.log("props.flowNodes", props.flowNodes)
-  // console.log("nodes", nodes)
-
   const laid = React.useMemo(() => {
-    // No filtering: Pass all nodes to layoutElements.
-    // It will use defaults if dims aren't ready.
-    // The useMemo dependency on props.nodeDims will trigger re-layout when dimensions update.
-    return layoutElements(nodes, edges, props.nodeDims);
-  }, [nodes, edges, props.nodeDims]);
+    return { nodes: props.flowNodes, edges: props.flowEdges };
+  }, [props.flowNodes, props.flowEdges]);
 
   // --- Custom Control Handlers ---
   const handleZoomIn = useCallback(() => {
@@ -391,14 +333,19 @@ export const Flow: React.FC<FlowProps> = (props) => {
         onConnectEnd={props.onConnectEnd}
         minZoom={minZoomSlider}
         maxZoom={maxZoomSlider}
-        onMoveEnd={(_event, viewport) => setCurrentZoom(viewport.zoom)}
+        onMoveEnd={(_event, viewport) => {
+          console.log("Viewport changed:", viewport); // Log viewport
+          setCurrentZoom(viewport.zoom)
+        }}
+        onNodeClick={(_event, node) => {
+          console.log("Node clicked:", node); // Log clicked node data
+        }}
       >
         <MiniMap nodeStrokeWidth={3} zoomable pannable />
         <Background color="#aaa" gap={16} />
+        <Controls />
       </ReactFlow>
-      {/* Custom Controls Overlay - Horizontal, Improved Styling, Icons, Slider */}
       <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 z-10 flex flex-col items-center p-2 bg-gray-800 bg-opacity-70 rounded-lg shadow-lg space-y-2">
-        {/* Icon Buttons Row */}
         <div className="flex flex-row space-x-2">
           <button
             title="Center First Node"
@@ -436,7 +383,6 @@ export const Flow: React.FC<FlowProps> = (props) => {
             <CursorArrowRaysIcon className="w-4 h-4" />
           </button>
         </div>
-        {/* Zoom Slider Row */}
         <div className="w-full px-2">
           <input
             type="range"
@@ -445,7 +391,7 @@ export const Flow: React.FC<FlowProps> = (props) => {
             step="0.05"
             value={currentZoom}
             onChange={handleZoomSliderChange}
-            className="w-full h-1 bg-gray-500 rounded-lg appearance-none cursor-pointer range-sm dark:bg-gray-700 accent-blue-500" // Basic styling, can be customized further
+            className="w-full h-1 bg-gray-500 rounded-lg appearance-none cursor-pointer range-sm dark:bg-gray-700 accent-blue-500"
             title={`Zoom: ${currentZoom.toFixed(2)}`}
           />
         </div>
@@ -464,15 +410,10 @@ export const FlowProvider: React.FC<FlowProviderProps> = (props) => {
   console.log("function FlowProvider started");
   return (
     <ReactFlowProvider>
-      {/* Pass all received props, including handlers, down to Flow */}
-      <Flow
-        flowNodes={props.flowNodes}
-        flowEdges={props.flowEdges}
-        nodeDims={props.nodeDims}
-        deleteBranch={props.deleteBranch}
-        onConnectStart={props.onConnectStart}
-        onConnectEnd={props.onConnectEnd}
-      />
+      <Flow {...props} />
+      <ViewportLogger />
+      <NodeInspector />
+      <ChangeLogger />
     </ReactFlowProvider>
   );
   console.log("function FlowProvider finished");

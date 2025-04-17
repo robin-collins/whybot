@@ -5,8 +5,14 @@ import React, {
   useRef,
   useState,
 } from "react";
-import { Flow } from "./Flow";
-import { Edge, MarkerType, Node, Position } from "reactflow";
+import { FlowProvider } from "./Flow";
+import {
+  Edge,
+  MarkerType,
+  Node,
+  Position,
+  OnConnectStart,
+} from "@xyflow/react";
 import {
   ArrowDownTrayIcon,
   ArrowLeftIcon,
@@ -29,7 +35,6 @@ import { useAppStore } from "./store/appStore";
 import { useShallow } from "zustand/react/shallow";
 import { Persona } from "./personas";
 import { Model, MODELS } from "./models";
-import { ReactFlowProvider } from "reactflow";
 import dagre from "dagre";
 
 interface GraphPageProps {
@@ -66,7 +71,7 @@ const layoutElements = (
 
   const defaultNodeWidth = 250;
   const defaultNodeHeight = 170;
-  dagreGraph.setGraph({ rankdir: direction, nodesep: 100, ranksep: 100 }); // Added ranksep
+  dagreGraph.setGraph({ rankdir: direction, nodesep: 250, ranksep: 400 }); // Increased ranksep significantly
 
   if (!nodes || nodes.length === 0) {
       console.warn("layoutElements called with no nodes.");
@@ -74,10 +79,12 @@ const layoutElements = (
   }
 
   nodes.forEach((node) => {
-    const dims = nodeDims[node.id];
+    // Re-enable dynamic dims, using v12's node.measured
+    const width = node.measured?.width ?? defaultNodeWidth;
+    const height = node.measured?.height ?? defaultNodeHeight;
     dagreGraph.setNode(node.id, {
-        width: dims?.width ?? defaultNodeWidth,
-        height: dims?.height ?? defaultNodeHeight,
+        width: width, // Use calculated width
+        height: height, // Use calculated height
     });
   });
 
@@ -102,6 +109,13 @@ const layoutElements = (
   // Create a *new* array for laid out nodes to ensure immutability
   const laidOutNodes = nodes.map((node) => {
     const nodeWithPosition = dagreGraph.node(node.id);
+
+    // --- DEBUG LOGGING START ---
+    if (node.id === 'q-0' || node.id === 'a-q-0') {
+      console.log(`Dagre calculated position for ${node.id}:`, nodeWithPosition);
+    }
+    // --- DEBUG LOGGING END ---
+
     if (nodeWithPosition) {
       return {
         ...node,
@@ -133,7 +147,7 @@ export const convertTreeToFlow = (
   answeringNodes: Set<string>,
   isGenerating: boolean,
   currentNodeDims: NodeDims
-): { nodes: Node<InteractiveNodeData>[]; edges: Edge[] } => {
+): { nodes: Node[]; edges: Edge[] } => {
   console.log("function convertTreeToFlow started");
   const nodes: Node<InteractiveNodeData>[] = [];
   const edges: Edge[] = [];
@@ -201,7 +215,7 @@ export const convertTreeToFlow = (
           if (nodes.some((n) => n.id === sourceId) && nodes.some((n) => n.id === targetId)) {
              edges.push({
                 id: `${sourceId}-${targetId}`,
-                type: "deleteEdge",
+                type: "bezier",
                 source: sourceId,
                 target: targetId,
                 data: { requestDeleteBranch, targetNodeId: targetId },
@@ -218,7 +232,7 @@ export const convertTreeToFlow = (
               if (nodes.some((n) => n.id === questionNodeId) && nodes.some((n) => n.id === answerNodeId)) {
                   edges.push({
                     id: `${questionNodeId}-${answerNodeId}`,
-                    type: "deleteEdge",
+                    type: "bezier",
                     source: questionNodeId,
                     target: answerNodeId,
                     animated: isGenerating,
@@ -681,6 +695,13 @@ function GraphPage(props: GraphPageProps) {
     []
   );
 
+  const onConnectStart = useCallback<OnConnectStart>(
+    (event, { nodeId }) => {
+      connectingNodeId.current = nodeId;
+    },
+    []
+  );
+
   const requestDeleteBranch = useCallback((targetNodeId: string) => {
     console.log("Requesting confirmation to delete branch starting at node:", targetNodeId);
     setNodeToDelete(targetNodeId);
@@ -708,16 +729,6 @@ function GraphPage(props: GraphPageProps) {
     setIsConfirmModalOpen(false);
     setNodeToDelete(null);
   }, [nodeToDelete]);
-
-  const onConnectStart = useCallback(
-    (
-      _event: React.MouseEvent | React.TouchEvent,
-      { nodeId }: { nodeId: string | null }
-    ) => {
-      connectingNodeId.current = nodeId;
-    },
-    []
-  );
 
   const onConnectEnd = useCallback((event: MouseEvent | TouchEvent) => {
     // const target = event.target as Element;
@@ -841,16 +852,14 @@ function GraphPage(props: GraphPageProps) {
         </div>
       )}
 
-      <ReactFlowProvider>
-        <Flow
-          flowNodes={laidOutElements.nodes}
-          flowEdges={laidOutElements.edges}
-          nodeDims={nodeDims}
-          onConnectStart={onConnectStart}
-          onConnectEnd={onConnectEnd}
-          deleteBranch={requestDeleteBranch}
-        />
-      </ReactFlowProvider>
+      <FlowProvider
+        flowNodes={laidOutElements.nodes}
+        flowEdges={laidOutElements.edges}
+        nodeDims={nodeDims}
+        onConnectStart={onConnectStart}
+        onConnectEnd={onConnectEnd}
+        deleteBranch={requestDeleteBranch}
+      />
 
       <AddNodeModal
         isOpen={isAddNodeModalOpen}

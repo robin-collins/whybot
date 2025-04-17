@@ -1,4 +1,4 @@
-import { getBezierPath } from "reactflow";
+import { getBezierPath, EdgeProps, BaseEdge } from "@xyflow/react";
 import "./DeletableEdge.css";
 import { useState } from "react";
 
@@ -7,9 +7,11 @@ const requestEdgeDeletion = (
   id: string,
   requestDeleteBranch: (edgeId: string) => void
 ) => {
+  console.log("function requestEdgeDeletion started");
   evt.stopPropagation();
   console.log(`Requesting deletion for edge ${id}`);
   requestDeleteBranch(id);
+  console.log("function requestEdgeDeletion finished");
 };
 
 type DeletableEdgeProps = {
@@ -38,6 +40,7 @@ export function DeletableEdge({
   style = {},
   data,
 }: DeletableEdgeProps) {
+  console.log("function DeletableEdge started");
   const [edgePath] = getBezierPath({
     sourceX,
     sourceY,
@@ -47,6 +50,7 @@ export function DeletableEdge({
     targetPosition,
   });
 
+  console.log("function DeletableEdge finished");
   return (
     <>
       <g className={"contains-path-and-arrow"}>

@@ -7,13 +7,16 @@ export function isChild(
   parentId: string,
   childId: string
 ): boolean {
+  console.log("function isChild started");
   let headId: string | undefined = childId;
   while (headId != null) {
     if (headId === parentId) {
+      console.log("function isChild finished");
       return true;
     }
     headId = qaTree[headId].parent;
   }
+  console.log("function isChild finished");
   return false;
 }
 
@@ -36,6 +39,7 @@ interface FocusedContextProviderProps {
 }
 
 export function FocusedContextProvider(props: FocusedContextProviderProps) {
+  console.log("function FocusedContextProvider started");
   const [focusedId, setFocusedId] = useState<string | null>(null);
 
   function isInFocusedBranch(id: string) {
@@ -51,6 +55,7 @@ export function FocusedContextProvider(props: FocusedContextProviderProps) {
     return false;
   }
 
+  console.log("function FocusedContextProvider finished");
   return (
     <FocusedContext.Provider
       value={{
@@ -68,5 +73,7 @@ export function FocusedContextProvider(props: FocusedContextProviderProps) {
 }
 
 export function useFocused() {
+  console.log("function useFocused started");
+  console.log("function useFocused finished");
   return useContext(FocusedContext);
 }

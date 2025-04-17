@@ -12,7 +12,7 @@ import { QATree, NodeDims, QATreeNode, NodeType } from "./types";
 import { ArrowLeftIcon } from "@heroicons/react/24/solid";
 import { Example } from "./StartPage";
 import "./GraphPageExample.css";
-import { OnConnectStartParams } from "reactflow";
+import { OnConnectStart, OnConnectStartParams } from "@xyflow/react";
 import { ArrowDownTrayIcon } from "@heroicons/react/24/solid";
 import { downloadDataAsJson } from "./util/json";
 import { SERVER_HOST } from "./constants";
@@ -25,6 +25,7 @@ export const streamQuestion = async (
   exampleTree: QATree,
   setResultTree: Dispatch<SetStateAction<QATree>>
 ) => {
+  console.log("function streamQuestion started");
   return new Promise((resolve) => {
     const node = exampleTree[id];
 
@@ -37,6 +38,7 @@ export const streamQuestion = async (
       });
       if (i >= node.question.length) {
         clearInterval(intervalQuestion);
+        console.log("function streamQuestion finished");
         resolve("done streaming question");
       }
     }, 50);
@@ -49,6 +51,7 @@ export const streamAnswer = async (
   exampleTree: QATree,
   setResultTree: Dispatch<SetStateAction<QATree>>
 ) => {
+  console.log("function streamAnswer started");
   return new Promise((resolve) => {
     const node = exampleTree[id];
     let i = 0;
@@ -60,6 +63,7 @@ export const streamAnswer = async (
       });
       if (i >= node.answer.length) {
         clearInterval(intervalAnswer);
+        console.log("function streamAnswer finished");
         resolve("done streaming answer");
       }
     }, 50);
@@ -72,6 +76,7 @@ export const streamQANode = async (
   exampleTree: QATree,
   setResultTree: Dispatch<SetStateAction<QATree>>
 ): Promise<string> => {
+  console.log("function streamQANode started");
   return new Promise(async (resolve) => {
     const node = exampleTree[id];
 
@@ -88,6 +93,7 @@ export const streamQANode = async (
 
     await streamQuestion(id, growingTree, exampleTree, setResultTree);
     await streamAnswer(id, growingTree, exampleTree, setResultTree);
+    console.log("function streamQANode finished");
     resolve("done streaming node");
   });
 };
@@ -96,6 +102,7 @@ export const streamExample = async (
   example: Example,
   setResultTree: Dispatch<SetStateAction<QATree>>
 ) => {
+  console.log("function streamExample started");
   const growingTree: QATree = {};
   const exampleTree = example.tree;
   let layer: string[] = ["0"];
@@ -118,6 +125,7 @@ export const streamExample = async (
     await Promise.all(promises);
     layer = nextLayer;
   }
+  console.log("function streamExample finished");
 };
 
 type GraphPageExampleProps = {
@@ -126,6 +134,7 @@ type GraphPageExampleProps = {
 };
 
 export function GraphPageExample({ example, onExit }: GraphPageExampleProps) {
+  console.log("function GraphPageExample started");
   const [resultTree, setResultTree] = useState<QATree>({});
   const [nodeDims, setNodeDims] = useState<NodeDims>({});
   const { nodes, edges } = useMemo(() => {
@@ -141,7 +150,8 @@ export function GraphPageExample({ example, onExit }: GraphPageExampleProps) {
         );
       },
       new Set<string>(),
-      false
+      false,
+      nodeDims
     );
   }, [resultTree, setNodeDims]);
 
@@ -153,11 +163,9 @@ export function GraphPageExample({ example, onExit }: GraphPageExampleProps) {
   const dummyDeleteBranch = useCallback((id: string) => {
     console.log(`Dummy deleteBranch called for: ${id}`);
   }, []);
-  const dummyOnConnectStart = useCallback(
-    (
-      event: React.MouseEvent | React.TouchEvent,
-      params: OnConnectStartParams
-    ) => {
+  // Dummy handler for connection start; use OnConnectStart type for proper signature
+  const dummyOnConnectStart = useCallback<OnConnectStart>(
+    (event, params) => {
       console.log("Dummy onConnectStart called", params);
     },
     []
@@ -221,4 +229,5 @@ export function GraphPageExample({ example, onExit }: GraphPageExampleProps) {
       </div>
     </div>
   );
+  console.log("function GraphPageExample finished");
 }

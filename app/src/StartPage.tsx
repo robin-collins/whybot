@@ -32,6 +32,7 @@ function StartPage(props: {
   onSubmitPrompt: (prompt: string) => void;
   onSetExample: (example: Example) => void;
 }) {
+  console.log("function StartPage started");
   const { model: modelStoreKey, persona, setModel, setPersona } = useAppStore(
     useShallow((state) => ({
       model: state.model,
@@ -82,6 +83,7 @@ function StartPage(props: {
   const examples: Example[] = examplesQuery.isLoading ? [] : examplesQuery.data ?? [];
 
   async function submitPrompt() {
+    console.log("function submitPrompt started");
     if (!persona) {
       console.error("Cannot submit prompt: Persona is not selected in the store.");
       return;
@@ -105,6 +107,7 @@ function StartPage(props: {
     } catch (e) {
       console.error("Error adding document: ", e);
     }
+    console.log("function submitPrompt finished");
   }
 
   const [randomQuestionLoading, setRandomQuestionLoading] = useState(false);
@@ -312,6 +315,7 @@ function StartPage(props: {
       />
     </>
   );
+  console.log("function StartPage finished");
 }
 
 export default StartPage;

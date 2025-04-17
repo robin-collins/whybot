@@ -6,6 +6,7 @@ import StartPage, { Example } from "./StartPage";
 import { RouterProvider, createBrowserRouter } from "react-router-dom";
 import AboutPage from "./AboutPage";
 
+
 function CoreStuff() {
   console.log("function CoreStuff started");
   const [seedQuery, setSeedQuery] = useState<string>();

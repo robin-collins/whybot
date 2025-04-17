@@ -44,6 +44,7 @@ export interface QATreeNode {
   url?: string; // URL for 'user-webpage' type
   isLoading?: boolean; // UI flag for loading states (file upload, URL fetch)
   errorMessage?: string; // Stores errors related to node processing
+  screenshot?: string; // Base64 PNG screenshot for 'user-webpage' type
 }
 
 /**

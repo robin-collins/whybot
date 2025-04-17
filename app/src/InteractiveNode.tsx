@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, ChangeEvent, useRef, useMemo } from "react";
-import { Handle, Position, NodeProps } from "reactflow";
+import { Handle, Position, NodeProps, useStore, useReactFlow, Node } from "@xyflow/react";
 import useMeasure from "react-use-measure";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -13,6 +13,8 @@ import {
   CheckCircleIcon,
   CogIcon,
 } from "@heroicons/react/24/outline"; // Example icons
+import { motion } from "framer-motion";
+import { XMarkIcon } from "@heroicons/react/24/solid";
 
 import { QATreeNode, NodeDims, NodeType, UserFileInfo } from "./types";
 import { useAppStore } from "./store/appStore"; // Import Zustand store
@@ -21,9 +23,10 @@ import "./InteractiveNode.css"; // Create this CSS file for styling
 
 // --- Debounce Utility ---
 function debounce<F extends (...args: any[]) => any>(func: F, wait: number): F {
+  console.log("function debounce started");
   let timeoutId: ReturnType<typeof setTimeout> | null = null;
 
-  return ((...args: Parameters<F>): void => {
+  const debounced = ((...args: Parameters<F>): void => {
     if (timeoutId) {
       clearTimeout(timeoutId);
     }
@@ -31,6 +34,8 @@ function debounce<F extends (...args: any[]) => any>(func: F, wait: number): F {
       func(...args);
     }, wait);
   }) as F;
+  console.log("function debounce finished");
+  return debounced;
 }
 // --- End Debounce Utility ---
 
@@ -44,6 +49,7 @@ async function handleFileUploadLogic(
   // Receive updateNode action from the store
   updateNode: (nodeId: string, dataChanges: Partial<QATreeNode>) => void
 ): Promise<void> {
+  console.log("function handleFileUploadLogic started");
   console.log(`Processing file ${file.name} for node ${nodeId}`);
   // Update node state via store action
   updateNode(nodeId, {
@@ -71,6 +77,7 @@ async function handleFileUploadLogic(
         file.type || "unknown"
       }) not supported. Please upload text-based files.`,
     });
+    console.log("function handleFileUploadLogic finished");
     return;
   }
   if (file.size > MAX_FILE_SIZE) {
@@ -80,6 +87,7 @@ async function handleFileUploadLogic(
         MAX_FILE_SIZE / 1024 / 1024
       }MB).`,
     });
+    console.log("function handleFileUploadLogic finished");
     return;
   }
 
@@ -101,6 +109,7 @@ async function handleFileUploadLogic(
       errorMessage: `Error reading file: ${error.message}`,
     });
   }
+  console.log("function handleFileUploadLogic finished");
 }
 
 /**
@@ -112,6 +121,7 @@ async function fetchWebpageContentLogic(
   // Receive updateNode action from the store
   updateNode: (nodeId: string, dataChanges: Partial<QATreeNode>) => void
 ): Promise<void> {
+  console.log("function fetchWebpageContentLogic started");
   console.log(`Fetching URL ${url} for node ${nodeId}`);
   // Update node state via store action
   updateNode(nodeId, { isLoading: true, errorMessage: undefined, answer: "" });
@@ -127,7 +137,7 @@ async function fetchWebpageContentLogic(
 
   try {
     const response = await fetch(
-      `/api/fetch-webpage?url=${encodeURIComponent(url)}`
+      `http://localhost:6823/api/fetch-webpage?url=${encodeURIComponent(url)}`
     );
     if (!response.ok) {
       const errorData = await response.json();
@@ -140,8 +150,8 @@ async function fetchWebpageContentLogic(
     updateNode(nodeId, {
       isLoading: false,
       url: url,
-      answer:
-        data.markdownContent || "# Content\n\nNo readable content extracted.",
+      answer: data.markdownContent || "# Content\n\nNo readable content extracted.",
+      screenshot: data.screenshot || undefined,
     });
     console.log(`URL ${url} processed successfully.`);
   } catch (error: any) {
@@ -153,6 +163,7 @@ async function fetchWebpageContentLogic(
       errorMessage: error.message || "Failed to fetch URL.",
     });
   }
+  console.log("function fetchWebpageContentLogic finished");
 }
 // --- End File and URL Handling Logic ---
 
@@ -175,12 +186,21 @@ export interface InteractiveNodeData extends QATreeNode {
   currentDims: { width: number; height: number }; // Add currentDims prop
   onGenerateAnswer?: (nodeId: string) => void;
   isAnswering?: boolean;
+  // Re-add index signature to satisfy Record<string, unknown>
+  [key: string]: any;
 }
+
+// --- Define a specific Node type using the v12 pattern ---
+type AppInteractiveNode = Node<InteractiveNodeData, 'interactiveNode'>;
 
 // --- Modal for node type selection ---
 const NodeTypeModal = ({ open, onSelect, onClose }) => {
-  if (!open) return null;
-  return (
+  console.log("function NodeTypeModal started");
+  if (!open) {
+    console.log("function NodeTypeModal finished");
+    return null;
+  }
+  const modal = (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
       <div className="bg-white rounded shadow-lg p-6 min-w-[220px] flex flex-col items-center">
         <div className="mb-4 font-semibold">What type of node do you want to add?</div>
@@ -191,13 +211,18 @@ const NodeTypeModal = ({ open, onSelect, onClose }) => {
       </div>
     </div>
   );
+  console.log("function NodeTypeModal finished");
+  return modal;
 };
 
-export const InteractiveNode: React.FC<NodeProps<InteractiveNodeData>> = ({
-  data,
+// Use the specific AppInteractiveNode type for NodeProps
+export const InteractiveNode: React.FC<NodeProps<AppInteractiveNode>> = ({
   id,
+  data, // Keep data prop
   selected,
 }) => {
+  console.log("function InteractiveNode started");
+  // Re-add explicit cast for data when destructuring
   const {
     nodeType,
     nodeID,
@@ -207,11 +232,11 @@ export const InteractiveNode: React.FC<NodeProps<InteractiveNodeData>> = ({
     url,
     isLoading,
     errorMessage,
-    setNodeDims: originalSetNodeDims, // Rename original prop
-    currentDims, // Destructure currentDims
+    setNodeDims,
+    currentDims,
     onGenerateAnswer,
     isAnswering,
-  } = data;
+  } = data as InteractiveNodeData; // Cast data to the correct type
 
   const { focusedId, isGenerating, updateNode, addNode, setFocusedId } =
     useAppStore(useShallow((state) => ({
@@ -222,6 +247,7 @@ export const InteractiveNode: React.FC<NodeProps<InteractiveNodeData>> = ({
       setFocusedId: state.setFocusedId,
     })));
 
+  const { setNodes, setEdges } = useReactFlow();
   const [ref, bounds] = useMeasure();
   const [maxNodeHeightPx, setMaxNodeHeightPx] = useState(
     window.innerHeight * 0.9
@@ -239,10 +265,10 @@ export const InteractiveNode: React.FC<NodeProps<InteractiveNodeData>> = ({
   const nodeRef = useRef<HTMLDivElement>(null);
 
   // Create a stable reference to the original setNodeDims prop
-  const setNodeDimsRef = useRef(originalSetNodeDims);
+  const setNodeDimsRef = useRef(setNodeDims);
   useEffect(() => {
-    setNodeDimsRef.current = originalSetNodeDims;
-  }, [originalSetNodeDims]);
+    setNodeDimsRef.current = setNodeDims;
+  }, [setNodeDims]);
 
   // Create the debounced version of setNodeDims
   const debouncedSetNodeDims = useMemo(
@@ -644,7 +670,42 @@ export const InteractiveNode: React.FC<NodeProps<InteractiveNodeData>> = ({
             )}
           </>
         );
-      case "user-webpage":
+      case "user-webpage": {
+        // --- Custom logic for webpage node thumbnail/expansion ---
+        // Screenshot is expected as a base64 PNG string in data.screenshot
+        const hasScreenshot = !!data.screenshot;
+        const [expanded, setExpanded] = useState(false);
+        const [shrinkTimeout, setShrinkTimeout] = useState<NodeJS.Timeout | null>(null);
+        const [thumbHeight, setThumbHeight] = useState<number>(120); // Default fallback
+        // If selected, expand; if not, shrink after 3s
+        useEffect(() => {
+          if (selected) {
+            setExpanded(true);
+            if (shrinkTimeout) {
+              clearTimeout(shrinkTimeout);
+              setShrinkTimeout(null);
+            }
+          } else if (expanded) {
+            // Wait 3s, then shrink
+            const timeout = setTimeout(() => setExpanded(false), 3000);
+            setShrinkTimeout(timeout);
+            return () => clearTimeout(timeout);
+          }
+        }, [selected]);
+        // Clean up timeout on unmount
+        useEffect(() => () => { if (shrinkTimeout) clearTimeout(shrinkTimeout); }, []);
+        // Compute thumbnail height based on image aspect ratio
+        useEffect(() => {
+          if (hasScreenshot && !expanded) {
+            const img = new window.Image();
+            img.onload = () => {
+              const aspect = img.naturalHeight / img.naturalWidth;
+              setThumbHeight(Math.round(200 * aspect));
+            };
+            img.src = `data:image/png;base64,${data.screenshot}`;
+          }
+        }, [data.screenshot, hasScreenshot, expanded]);
+        // ---
         return (
           <>
             <div className="flex items-center mb-1">
@@ -656,13 +717,32 @@ export const InteractiveNode: React.FC<NodeProps<InteractiveNodeData>> = ({
                 {url || "Web Page Node"}
               </span>
             </div>
-            {answer ? (
-              <ReactMarkdown
-                className="text-xs bg-gray-50 p-1 max-h-40 overflow-y-auto border rounded"
-                {...commonMarkdownProps}
+            {hasScreenshot && !expanded ? (
+              <img
+                src={`data:image/png;base64,${data.screenshot}`}
+                alt="Webpage thumbnail"
+                className="rounded border border-gray-300 shadow-sm transition-all duration-300"
+                style={{ width: 200, height: thumbHeight, objectFit: 'cover', cursor: 'pointer', display: 'block' }}
+                onClick={() => setExpanded(true)}
+              />
+            ) : answer ? (
+              <div
+                className="transition-all duration-300 bg-gray-50 border rounded p-1 overflow-y-auto"
+                style={{
+                  width: answer.length > 1500 ? 375 : 250,
+                  maxHeight: '99vh',
+                  minHeight: 80,
+                  cursor: 'pointer',
+                }}
+                onClick={() => setExpanded(false)}
               >
-                {String(answer)}
-              </ReactMarkdown>
+                <ReactMarkdown
+                  className="text-xs prose prose-sm max-w-none prose-p:my-1 prose-li:my-0.5"
+                  {...commonMarkdownProps}
+                >
+                  {String(answer)}
+                </ReactMarkdown>
+              </div>
             ) : (
               <div className="flex items-center space-x-1">
                 <input
@@ -683,6 +763,7 @@ export const InteractiveNode: React.FC<NodeProps<InteractiveNodeData>> = ({
             )}
           </>
         );
+      }
       default:
         return <div>Unknown Node Type: {nodeType}</div>;
     }
@@ -715,11 +796,8 @@ export const InteractiveNode: React.FC<NodeProps<InteractiveNodeData>> = ({
         onMouseLeave={handleNodeMouseLeave}
       >
         <Handle type="target" position={Position.Left} className="!bg-gray-400" />
-        <Handle
-          type="source"
-          position={Position.Right}
-          className="!bg-gray-400"
-        />
+        <Handle type="source" position={Position.Right}
+        className="!bg-gray-400" />
         <div
           className="node-content-wrapper"
           style={{ maxHeight: maxNodeHeightPx, overflowY: "auto" }}
@@ -807,6 +885,7 @@ export const InteractiveNode: React.FC<NodeProps<InteractiveNodeData>> = ({
       />
     </>
   );
+  console.log("function InteractiveNode finished");
 };
 
 // Default export or named export

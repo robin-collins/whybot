@@ -4,6 +4,8 @@ const DURATION = 0.5;
 const DOTS = 3;
 
 export default function Loader() {
+  console.log("function Loader started");
+  console.log("function Loader finished");
   return (
     <div className="flex items-center gap-1">
       {Array.from({ length: DOTS }).map((_, index) => {

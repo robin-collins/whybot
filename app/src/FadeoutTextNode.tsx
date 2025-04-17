@@ -51,6 +51,7 @@ type FadeoutTextNodeProps = {
   };
 };
 export const FadeoutTextNode: React.FC<FadeoutTextNodeProps> = (props) => {
+  console.log("function FadeoutTextNode started");
   const isLongAnswer = !props.data.question && props.data.text.length > 800;
   const targetMaxWidth = isLongAnswer ? 500 : 250;
 
@@ -231,4 +232,5 @@ export const FadeoutTextNode: React.FC<FadeoutTextNodeProps> = (props) => {
         )}
     </div>
   );
+  console.log("function FadeoutTextNode finished");
 };

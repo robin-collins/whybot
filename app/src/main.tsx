@@ -11,13 +11,16 @@ const fpPromise = FingerprintJS.load({ monitoring: false });
 let fingerprint: string | null = null;
 
 export async function getFingerprint() {
+  console.log("function getFingerprint started");
   if (fingerprint) {
+    console.log("function getFingerprint finished");
     return fingerprint;
   }
 
   const fp = await fpPromise;
   const result = await fp.get();
   fingerprint = result.visitorId;
+  console.log("function getFingerprint finished");
   return fingerprint;
 }
 

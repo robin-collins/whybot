@@ -1,5 +1,5 @@
 {
-    "name": "my-monorepo-project",
+    "name": "whybot-ai-mindmap",
     "version": "1.0.0",
     "private": true,
     "workspaces": [
@@ -8,9 +8,20 @@
     ],
     "scripts": {
         "dev": "concurrently \"npm:start --workspace=server\" \"npm:dev --workspace=app\"",
-        "build": "npm run build --workspace=app"
+        "build": "npm run build --workspace=app",
+        "compile:app": "npx tsc --noEmit -p app/tsconfig.json",
+        "clean:app": "rm -Rf app/node_modules",
+        "clean:server": "rm -Rf server/node_modules",
+        "clean:monorepo": "rm -Rf node_modules package-lock.json",
+        "clean:all": "rm -Rf app/node_modules && rm -Rf server/node_modules && rm -Rf node_modules package-lock.json"
     },
     "devDependencies": {
         "concurrently": "^9.1.2"
+    },
+    "dependencies": {
+        "@reactflow/node-resizer": "^2.2.14",
+        "@xyflow/react": "^12.5.6",
+        "entitree-flex": "^0.4.1",
+        "puppeteer": "^24.6.1"
     }
 }

@@ -31,12 +31,12 @@ const logEnvVar = (envVar: string | undefined, name: string) => {
   }
 };
 
-logEnvVar(process.env.FIREBASE_PRIVATE_KEY, "FIREBASE_PRIVATE_KEY");
-logEnvVar(process.env.OPENAI_API_KEY, "OPENAI_API_KEY");
-logEnvVar(process.env.MAX_TOKENS, "MAX_TOKENS");
+// logEnvVar(process.env.FIREBASE_PRIVATE_KEY, "FIREBASE_PRIVATE_KEY");
+// logEnvVar(process.env.OPENAI_API_KEY, "OPENAI_API_KEY");
+// logEnvVar(process.env.MAX_TOKENS, "MAX_TOKENS");
 
 // Check for GOOGLE_APPLICATION_CREDENTIALS which is needed for applicationDefault()
-logEnvVar(process.env.GOOGLE_APPLICATION_CREDENTIALS, "GOOGLE_APPLICATION_CREDENTIALS");
+// logEnvVar(process.env.GOOGLE_APPLICATION_CREDENTIALS, "GOOGLE_APPLICATION_CREDENTIALS");
 
 initializeApp({
   // Use application default credentials.
@@ -52,8 +52,8 @@ const db = getFirestore();
 const store = new MemoryStore();
 
 const PROMPT_LIMITS = {
-  "openai/gpt-4.1-mini": 50,
-  "openai/gpt-4.1": 10,
+  "openai/gpt-4.1-mini": 5000,
+  "openai/gpt-4.1": 1000,
 };
 const PORT = process.env.PORT || 6823;
 
@@ -111,7 +111,7 @@ wss.on("connection", (ws) => {
         const documentRef = await db
           .collection("completions")
           .add({ ...data, createdAt: new Date() });
-        console.log("Document added with ID:", documentRef.id);
+        // console.log("Document added:", documentRef.id);
       } catch (error) {
         console.error("Error while adding document:", error);
       }
@@ -150,10 +150,10 @@ wss.on("connection", (ws) => {
           ws.send(JSON.stringify({ type: 'chunk', nodeId, content: completion }));
         }
       }
-      console.log("OA Response Stream finished.");
-      console.log("----------------------------------------------------------------");
-      console.log(oai_response_json);
-      console.log("----------------------------------------------------------------");
+      // console.log("OA Response Stream finished.");
+      // console.log("----------------------------------------------------------------");
+      // console.log(oai_response_json);
+      //console.log("----------------------------------------------------------------");
       // Send done signal with nodeId
       ws.send(JSON.stringify({ type: 'done', nodeId }));
 
@@ -191,7 +191,7 @@ app.get("/api/completion", (req, res) => {
 
 app.get("/api/prompts-remaining", (req, res) => {
   const key = rateLimiterKey(req.query.model as string, req.query.fp as string);
-  console.log("KEY", key);
+  // console.log("KEY", key);
 
   const remaining = Math.max(
     (PROMPT_LIMITS[req.query.model as keyof typeof PROMPT_LIMITS] ?? 5) -
@@ -207,7 +207,7 @@ app.get("/api/prompts-remaining", (req, res) => {
 app.get("/api/moar-prompts", (req, res) => {
   const key = rateLimiterKey(req.query.model as string, req.query.fp as string);
   store.hits[key] = (store.hits[key] ?? 0) - 3;
-  console.log("Got moar prompts for", req.query.fp);
+  // console.log("Got moar prompts for", req.query.fp);
   res.json({
     message: "Decremented",
   });
