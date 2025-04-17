@@ -20,8 +20,8 @@ function ChangeInfo({ change }: ChangeInfoProps) {
   const { type } = change;
 
   return (
-    <div style={{ marginBottom: 4 }}>
-      <div>node id: {id}</div>
+    <div className="mb-2 p-2 bg-gray-100 rounded border border-gray-200">
+      <div className="text-xs font-medium">Node ID: {id}</div>
       <div>
         {type === 'add' ? JSON.stringify(change.item, null, 2) : null}
         {type === 'dimensions'
@@ -63,10 +63,10 @@ export default function ChangeLogger({ limit = 20 }: ChangeLoggerProps) {
   }, [onNodesChange, limit]);
 
   return (
-    <div className="react-flow__devtools-changelogger">
-      <div className="react-flow__devtools-title">Change Logger</div>
+    <div className="fixed top-16 left-4 w-80 max-h-[70vh] overflow-y-auto bg-white bg-opacity-90 backdrop-blur p-4 rounded-lg shadow z-50">
+      <div className="text-lg font-semibold mb-2">Change Logger</div>
       {changes.length === 0 ? (
-        <>no changes triggered</>
+        <div className="text-sm text-gray-600">No changes triggered</div>
       ) : (
         changes.map((change, index) => (
           <ChangeInfo key={index} change={change} />

@@ -1,88 +1,56 @@
-import {
-    useNodes,
-    ViewportPortal,
-    useReactFlow,
-    type XYPosition,
-  } from '@xyflow/react';
+// app/src/NodeInspector.tsx
+import React from 'react';
+import { useNodes, ViewportPortal, useReactFlow, type XYPosition } from '@xyflow/react';
 
-  export default function NodeInspector() {
-    const { getInternalNode } = useReactFlow();
-    const nodes = useNodes();
+export default function NodeInspector() {
+  const nodes = useNodes();
+  const { getInternalNode } = useReactFlow();
 
-    return (
-      <ViewportPortal>
-        <div className="react-flow__devtools-nodeinspector">
-          {nodes.map((node) => {
-            const internalNode = getInternalNode(node.id);
-            if (!internalNode) {
-              return null;
-            }
-
-            const absPosition = internalNode?.internals.positionAbsolute;
-
-            return (
-              <NodeInfo
-                key={node.id}
-                id={node.id}
-                selected={!!node.selected}
-                type={node.type || 'default'}
-                position={node.position}
-                absPosition={absPosition}
-                width={node.measured?.width ?? 0}
-                height={node.measured?.height ?? 0}
-                data={node.data}
-              />
-            );
-          })}
-        </div>
-      </ViewportPortal>
-    );
-  }
-
-  type NodeInfoProps = {
-    id: string;
-    type: string;
-    selected: boolean;
-    position: XYPosition;
-    absPosition: XYPosition;
-    width?: number;
-    height?: number;
-    data: any;
-  };
-
-  function NodeInfo({
-    id,
-    type,
-    selected,
-    position,
-    absPosition,
-    width,
-    height,
-    data,
-  }: NodeInfoProps) {
-    if (!width || !height) {
-      return null;
-    }
-
-    return (
+  return (
+    <ViewportPortal>
+      {/* Overlay container to hold all node labels */}
       <div
-        className="react-flow__devtools-nodeinfo"
         style={{
           position: 'absolute',
-          transform: `translate(${absPosition.x}px, ${absPosition.y + height}px)`,
-          width: width * 2,
+          top: 0,
+          left: 0,
+          width: '100%',
+          height: '100%',
+          pointerEvents: 'none',
         }}
       >
-        <div>id: {id}</div>
-        <div>type: {type}</div>
-        <div>selected: {selected ? 'true' : 'false'}</div>
-        <div>
-          position: {position.x.toFixed(1)}, {position.y.toFixed(1)}
-        </div>
-        <div>
-          dimensions: {width} × {height}
-        </div>
-        <div>data: {JSON.stringify(data, null, 2)}</div>
+        {nodes.map((node) => {
+          // Grab the internal node to get absolute coords
+          const internal = getInternalNode(node.id);
+          if (!internal) return null;
+
+          const absPos = internal.internals.positionAbsolute;
+          const width = node.measured?.width ?? 0;
+          const height = node.measured?.height ?? 0;
+
+          // Nothing to show if not yet measured
+          if (width <= 0 || height <= 0) return null;
+
+          const { x, y } = node.position as XYPosition;
+
+          return (
+            <div
+              key={node.id}
+              className="absolute pointer-events-none bg-white/80 p-1 rounded border border-gray-300 text-xs shadow"
+              style={{
+                transform: `translate(${absPos.x}px, ${absPos.y + height}px)`,
+                width,
+              }}
+            >
+              <div>ID: {node.id}</div>
+              <div>Type: {node.type}</div>
+              <div>Pos: {x.toFixed(1)}, {y.toFixed(1)}</div>
+              <div>Size: {width.toFixed(1)}×{height.toFixed(1)}</div>
+              <div>Data: {JSON.stringify(node.data)}</div>
+            </div>
+          );
+        })}
       </div>
-    );
-  }
+    </ViewportPortal>
+  );
+}
