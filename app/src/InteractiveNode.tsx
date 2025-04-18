@@ -13,7 +13,7 @@ import {
   CheckCircleIcon,
   CogIcon,
 } from "@heroicons/react/24/outline"; // Example icons
-import { motion } from "framer-motion";
+import { motion, usePresence } from "framer-motion";
 import { XMarkIcon } from "@heroicons/react/24/solid";
 
 import { QATreeNode, NodeDims, NodeType, UserFileInfo } from "./types";
@@ -222,7 +222,7 @@ export const InteractiveNode: React.FC<NodeProps<AppInteractiveNode>> = ({
   selected,
 }) => {
   console.log("function InteractiveNode started");
-  // Re-add explicit cast for data when destructuring
+  // Destructure needed props ONCE
   const {
     nodeType,
     nodeID,
@@ -232,11 +232,11 @@ export const InteractiveNode: React.FC<NodeProps<AppInteractiveNode>> = ({
     url,
     isLoading,
     errorMessage,
-    setNodeDims,
-    currentDims,
+    setNodeDims, // Original prop
+    currentDims, // Original prop
     onGenerateAnswer,
     isAnswering,
-  } = data as InteractiveNodeData; // Cast data to the correct type
+  } = data as InteractiveNodeData;
 
   const { focusedId, isGenerating, updateNode, addNode, setFocusedId } =
     useAppStore(useShallow((state) => ({
@@ -248,10 +248,11 @@ export const InteractiveNode: React.FC<NodeProps<AppInteractiveNode>> = ({
     })));
 
   const { setNodes, setEdges } = useReactFlow();
-  const [ref, bounds] = useMeasure();
-  const [maxNodeHeightPx, setMaxNodeHeightPx] = useState(
-    window.innerHeight * 0.9
-  );
+  const [ref, bounds] = useMeasure({ scroll: true, debounce: 50 }); // Ref for outer motion.div
+  const contentRef = useRef<HTMLDivElement>(null); // Ref for inner content div
+  const [maxNodeHeightPx, setMaxNodeHeightPx] = useState(window.innerHeight * 0.9); // Declared ONCE
+
+  // ... other state declarations (localQuestion, localUrl, etc.) ...
   const [localQuestion, setLocalQuestion] = useState(question);
   const [localUrl, setLocalUrl] = useState(url || "");
   const [connectionPoint, setConnectionPoint] = useState<null | { edge: 'top' | 'right' | 'bottom' | 'left', x: number, y: number }>(null);
@@ -262,37 +263,35 @@ export const InteractiveNode: React.FC<NodeProps<AppInteractiveNode>> = ({
   const [pendingConnection, setPendingConnection] = useState<null | { from: { x: number; y: number }, to: { x: number; y: number } }>(null);
   const dragTimer = useRef<NodeJS.Timeout | null>(null);
   const isMouseDown = useRef(false);
-  const nodeRef = useRef<HTMLDivElement>(null);
+  // nodeRef might be unused now, can remove if confirmed
+  // const nodeRef = useRef<HTMLDivElement>(null);
 
-  // Create a stable reference to the original setNodeDims prop
+  // ... stable refs and debounced setters ...
   const setNodeDimsRef = useRef(setNodeDims);
   useEffect(() => {
     setNodeDimsRef.current = setNodeDims;
   }, [setNodeDims]);
 
-  // Create the debounced version of setNodeDims
   const debouncedSetNodeDims = useMemo(
     () =>
       debounce(
         (
           dimsUpdater: React.SetStateAction<NodeDims> | ((prev: NodeDims) => NodeDims)
         ) => {
-          // Call the latest setNodeDims function from the ref
           if (setNodeDimsRef.current) {
             if (typeof dimsUpdater === 'function') {
-              // If it's an updater function, pass the previous state (though this specific usage doesn't)
               setNodeDimsRef.current(dimsUpdater as (prev: NodeDims) => NodeDims);
             } else {
-              // Handle direct state object (not used here but good practice)
               setNodeDimsRef.current(dimsUpdater);
             }
           }
         },
-        50 // Debounce time in milliseconds (adjust as needed)
+        50
       ),
-    [] // No dependencies, creates the debounced function once
+    []
   );
 
+  // Sync local state with props
   useEffect(() => {
     setLocalQuestion(question);
   }, [question]);
@@ -301,6 +300,7 @@ export const InteractiveNode: React.FC<NodeProps<AppInteractiveNode>> = ({
     setLocalUrl(url || "");
   }, [url]);
 
+  // Max height effect
   useEffect(() => {
     const handleResize = () => setMaxNodeHeightPx(window.innerHeight * 0.9);
     window.addEventListener("resize", handleResize);
@@ -308,74 +308,63 @@ export const InteractiveNode: React.FC<NodeProps<AppInteractiveNode>> = ({
     return () => window.removeEventListener("resize", handleResize);
   }, []);
 
-  // Effect to update dimensions - uses the debounced function
-  useEffect(() => {
-    if (bounds.width > 0 && bounds.height > 0) {
-      const scaleFactor = getScaleFactor();
-      const currentActualHeight = bounds.height / scaleFactor;
-      const currentWidth = bounds.width / scaleFactor;
-      const targetWidth =
-        nodeType === "llm-answer" && answer && answer.length > 800 ? 500 : 300;
 
-      const verticalPaddingAndBorder = 16 + 6;
-      let additionalHeight = 0;
-      if (
-        (nodeType === "llm-question" || nodeType === "user-question") &&
-        !answer &&
-        onGenerateAnswer
-      )
-        additionalHeight += 30;
-      if (nodeType === "user-file") additionalHeight += 40;
-      if (nodeType === "user-webpage") additionalHeight += 40;
-      if (errorMessage) additionalHeight += 20;
-      if (isLoading) additionalHeight += 20;
+  // --- Dimension reporting logic ---
+  // Helper function to update dimensions (non-debounced)
+  const updateDimensions = useCallback((width: number, height: number) => {
+    const scale = getScaleFactor();
+    // Use scrollWidth/Height if available (from contentRef), otherwise use measured bounds
+    const finalWidth = width > 0 ? width : bounds.width;
+    const finalHeight = height > 0 ? height: bounds.height;
 
-      const baseCalculatedHeight =
-        currentActualHeight + verticalPaddingAndBorder + additionalHeight;
-      const reportedHeight = Math.min(baseCalculatedHeight, maxNodeHeightPx);
-      const reportedWidth = Math.max(currentWidth, targetWidth);
+    const scaledWidth = finalWidth / scale;
+    const scaledHeight = finalHeight / scale;
 
-      // --- Check against currentDims before updating ---
-      const widthChanged = Math.abs((currentDims?.width ?? 0) - reportedWidth) >= 1;
-      const heightChanged = Math.abs((currentDims?.height ?? 0) - reportedHeight) >= 1;
-
-      if (widthChanged || heightChanged) {
-          console.log(`InteractiveNode ${nodeID}: Dims changed. New: w=${reportedWidth.toFixed(1)}, h=${reportedHeight.toFixed(1)}. Old: w=${currentDims?.width?.toFixed(1)}, h=${currentDims?.height?.toFixed(1)}`);
-          // Call the DEBOUNCED state setter only if dimensions changed
-          debouncedSetNodeDims((prev) => {
-             // We still need to check prev state inside the updater
-             // in case multiple rapid measurements occur before debounce fires.
-             const oldDimsInUpdater = prev[nodeID];
-             if (
-                oldDimsInUpdater &&
-                Math.abs(oldDimsInUpdater.width - reportedWidth) < 1 &&
-                Math.abs(oldDimsInUpdater.height - reportedHeight) < 1
-             ) {
-                return prev; // Return previous state if no change since last update WITHIN debounce period
-             }
-             // Otherwise, return the new state object
-             return {
-                ...prev,
-                [nodeID]: { width: reportedWidth, height: reportedHeight },
-             };
-          });
-      }
-      // --- End check ---
+    // Only update if dimensions actually changed significantly
+    if (
+      finalWidth > 0 && finalHeight > 0 &&
+      (Math.abs(scaledWidth - (currentDims?.width || 0)) > 1 ||
+       Math.abs(scaledHeight - (currentDims?.height || 0)) > 1)
+    ) {
+      setNodeDims((dims) => ({
+        ...dims,
+        [nodeID]: { width: scaledWidth, height: scaledHeight },
+      }));
+      console.log(
+        `Node ${nodeID} dimensions updated (updateDimensions): ${scaledWidth.toFixed(1)}x${scaledHeight.toFixed(1)} (Scale: ${scale.toFixed(2)})`
+      );
     }
-  }, [
-    bounds.width,
-    bounds.height,
-    debouncedSetNodeDims,
-    nodeID,
-    nodeType,
-    answer,
-    isLoading,
-    errorMessage,
-    maxNodeHeightPx,
-    onGenerateAnswer,
-    currentDims, // Add currentDims as dependency
-  ]);
+  }, [nodeID, setNodeDims, currentDims?.width, currentDims?.height, bounds.width, bounds.height]); // Include bounds as fallback
 
+  // Debounced version for general resize/content changes (non-expansion)
+  const debouncedUpdateDimensions = useCallback(
+    debounce(() => {
+        // Pass measured bounds dimensions to the core update function
+        if (bounds.width > 0 && bounds.height > 0) {
+            updateDimensions(bounds.width, bounds.height);
+        }
+    }, 150),
+    [updateDimensions, bounds.width, bounds.height] // Depends on the stable updateDimensions and bounds
+  );
+
+  // Expansion state
+  const CHAR_LIMIT_FOR_EXPANSION = 1500;
+  const isExpanded = nodeType === "llm-answer" && answer && answer.length > CHAR_LIMIT_FOR_EXPANSION;
+
+  // Report dimensions on general resize/content changes, BUT NOT if it's currently expanded
+  useEffect(() => {
+    if (!isExpanded && bounds.width > 0 && bounds.height > 0) {
+        debouncedUpdateDimensions(); // Call the debounced function
+    }
+    // Only depends on bounds change and expansion state
+  }, [bounds.width, bounds.height, isExpanded, debouncedUpdateDimensions]);
+
+  // --- End Dimension Reporting ---
+
+  // --- Node Content Rendering & Handlers ---
+  const [isPresent, safeToRemove] = usePresence(); // For exit animation
+
+  // ... other handlers (handleLocalQuestionChange, handleUrlChange, etc.) ...
   const handleLocalQuestionChange = (e: ChangeEvent<HTMLTextAreaElement>) => {
     const newValue = e.target.value;
     setLocalQuestion(newValue);
@@ -462,25 +451,27 @@ export const InteractiveNode: React.FC<NodeProps<AppInteractiveNode>> = ({
     focusedId === nodeID || focusedId === nodeID.replace(/^a-/, "q-");
 
   // Helper to find nearest edge and point
-  function getNearestEdgeAndPoint(e: React.MouseEvent, rect: DOMRect): { edge: 'top' | 'right' | 'bottom' | 'left', x: number, y: number } | null {
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-    const distTop = y;
-    const distBottom = rect.height - y;
-    const distLeft = x;
-    const distRight = rect.width - x;
-    const minDist = Math.min(distTop, distBottom, distLeft, distRight);
-    if (minDist > 24) return null;
-    if (minDist === distTop) return { edge: 'top', x, y: 0 };
-    if (minDist === distBottom) return { edge: 'bottom', x, y: rect.height };
-    if (minDist === distLeft) return { edge: 'left', x: 0, y };
-    return { edge: 'right' as const, x: rect.width, y };
+  function getNearestEdgeAndPoint(e: React.MouseEvent, element: HTMLElement): { edge: 'top' | 'right' | 'bottom' | 'left', x: number, y: number } | null {
+      const rect = element.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      const distTop = y;
+      const distBottom = rect.height - y;
+      const distLeft = x;
+      const distRight = rect.width - x;
+      const minDist = Math.min(distTop, distBottom, distLeft, distRight);
+      if (minDist > 24) return null;
+      if (minDist === distTop) return { edge: 'top', x, y: 0 };
+      if (minDist === distBottom) return { edge: 'bottom', x, y: rect.height };
+      if (minDist === distLeft) return { edge: 'left', x: 0, y };
+      return { edge: 'right' as const, x: rect.width, y };
   }
 
   const handleNodeMouseMove = (e: React.MouseEvent) => {
-    if (!nodeRef.current) return;
-    const rect = nodeRef.current.getBoundingClientRect();
-    const pt = getNearestEdgeAndPoint(e, rect);
+    // Use the outer ref (motion.div) for detecting hover edge
+    const outerDiv = (e.target as HTMLElement).closest('.interactive-node');
+    if (!outerDiv) return;
+    const pt = getNearestEdgeAndPoint(e, outerDiv as HTMLElement);
     setConnectionPoint(pt);
   };
 
@@ -490,10 +481,11 @@ export const InteractiveNode: React.FC<NodeProps<AppInteractiveNode>> = ({
   const handleConnectionMouseDown = (e: React.MouseEvent) => {
     e.stopPropagation();
     if (!connectionPoint) return;
+    const outerDiv = (e.target as HTMLElement).closest('.interactive-node');
+    if (!outerDiv) return;
+
     isMouseDown.current = true;
-    // Compute absolute start point
-    if (!nodeRef.current) return;
-    const rect = nodeRef.current.getBoundingClientRect();
+    const rect = outerDiv.getBoundingClientRect();
     const startX = rect.left + connectionPoint.x;
     const startY = rect.top + connectionPoint.y;
     dragTimer.current = setTimeout(() => {
@@ -501,7 +493,7 @@ export const InteractiveNode: React.FC<NodeProps<AppInteractiveNode>> = ({
         setIsDraggingConnection(true);
         setDragPos({ x: e.clientX, y: e.clientY });
         setPendingConnection({ from: { x: startX, y: startY }, to: { x: e.clientX, y: e.clientY } });
-        // Listen for mousemove/mouseup on window
+
         const handleMove = (moveEvent: MouseEvent) => {
           setDragPos({ x: moveEvent.clientX, y: moveEvent.clientY });
           setPendingConnection(prev => prev ? { ...prev, to: { x: moveEvent.clientX, y: moveEvent.clientY } } : null);
@@ -519,7 +511,7 @@ export const InteractiveNode: React.FC<NodeProps<AppInteractiveNode>> = ({
         window.addEventListener("mouseup", handleUp);
       }
     }, 100);
-    // If mouse is released before 100ms, cancel
+
     const handleEarlyUp = () => {
       isMouseDown.current = false;
       if (dragTimer.current) clearTimeout(dragTimer.current);
@@ -533,9 +525,6 @@ export const InteractiveNode: React.FC<NodeProps<AppInteractiveNode>> = ({
     setShowTypeModal(false);
     setModalAt(null);
     if (pendingConnection && modalAt) {
-      // Place the new node at the modal location (canvas coordinates)
-      // For now, just use the screen coordinates; in a real app, convert to graph/canvas coords
-      // Add the node and connect it
       handleAddNodeAt(type, modalAt.x, modalAt.y, pendingConnection.from);
     }
     setPendingConnection(null);
@@ -571,6 +560,7 @@ export const InteractiveNode: React.FC<NodeProps<AppInteractiveNode>> = ({
     );
   };
 
+  // Render content based on node type
   const renderContent = () => {
     const commonMarkdownProps = { remarkPlugins: [remarkGfm] };
     const showAnsweringButton = isAnswering ?? false;
@@ -606,10 +596,7 @@ export const InteractiveNode: React.FC<NodeProps<AppInteractiveNode>> = ({
                     "bg-green-600 cursor-wait": showAnsweringButton,
                     "bg-sky-600 hover:bg-sky-700 cursor-pointer":
                       !showAnsweringButton &&
-                      !(
-                        nodeType === "user-question" &&
-                        localQuestion.length < 20
-                      ),
+                      !(nodeType === "user-question" && localQuestion.length < 20),
                     "bg-gray-400 cursor-not-allowed":
                       !showAnsweringButton &&
                       nodeType === "user-question" &&
@@ -671,13 +658,10 @@ export const InteractiveNode: React.FC<NodeProps<AppInteractiveNode>> = ({
           </>
         );
       case "user-webpage": {
-        // --- Custom logic for webpage node thumbnail/expansion ---
-        // Screenshot is expected as a base64 PNG string in data.screenshot
         const hasScreenshot = !!data.screenshot;
         const [expanded, setExpanded] = useState(false);
         const [shrinkTimeout, setShrinkTimeout] = useState<NodeJS.Timeout | null>(null);
-        const [thumbHeight, setThumbHeight] = useState<number>(120); // Default fallback
-        // If selected, expand; if not, shrink after 3s
+        const [thumbHeight, setThumbHeight] = useState<number>(120);
         useEffect(() => {
           if (selected) {
             setExpanded(true);
@@ -686,15 +670,12 @@ export const InteractiveNode: React.FC<NodeProps<AppInteractiveNode>> = ({
               setShrinkTimeout(null);
             }
           } else if (expanded) {
-            // Wait 3s, then shrink
             const timeout = setTimeout(() => setExpanded(false), 3000);
             setShrinkTimeout(timeout);
             return () => clearTimeout(timeout);
           }
         }, [selected]);
-        // Clean up timeout on unmount
         useEffect(() => () => { if (shrinkTimeout) clearTimeout(shrinkTimeout); }, []);
-        // Compute thumbnail height based on image aspect ratio
         useEffect(() => {
           if (hasScreenshot && !expanded) {
             const img = new window.Image();
@@ -705,7 +686,7 @@ export const InteractiveNode: React.FC<NodeProps<AppInteractiveNode>> = ({
             img.src = `data:image/png;base64,${data.screenshot}`;
           }
         }, [data.screenshot, hasScreenshot, expanded]);
-        // ---
+
         return (
           <>
             <div className="flex items-center mb-1">
@@ -769,121 +750,139 @@ export const InteractiveNode: React.FC<NodeProps<AppInteractiveNode>> = ({
     }
   };
 
+  // Animation complete handler
+  const handleAnimationComplete = () => {
+    if (contentRef.current) {
+      // Measure the *inner content div* after animation
+      const finalWidth = contentRef.current.scrollWidth;
+      // Use outer bounds for height initially, then refine if contentRef is taller
+      let finalHeight = bounds.height;
+      if (contentRef.current.scrollHeight > finalHeight) {
+          finalHeight = contentRef.current.scrollHeight;
+      }
+
+      console.log(`Node ${nodeID} animation complete. Content scroll dims: ${finalWidth}x${contentRef.current.scrollHeight}. Outer bounds: ${bounds.width}x${bounds.height}. Final: ${finalWidth}x${finalHeight}`);
+      updateDimensions(finalWidth, finalHeight); // Use the non-debounced version
+    } else {
+      console.warn(`Node ${nodeID} animation complete, but contentRef is null. Using bounds.`);
+      // Fallback to bounds if ref is somehow null
+      if (bounds.width > 0 && bounds.height > 0) {
+           updateDimensions(bounds.width, bounds.height);
+      }
+    }
+  };
+
+  // Adjust base and expanded widths based on node type
+  let contentWidth = 300; // Default base width
+  let expandedWidth = 500; // Default expanded width
+
+  if (nodeType === 'llm-answer') {
+      contentWidth = 450;  // Start 50% wider
+      expandedWidth = 600; // Expand further
+  } else if (nodeType === 'user-webpage') {
+      // Keep specific webpage logic if needed, otherwise defaults apply
+      contentWidth = 300; // Or keep existing logic: const contentWidth = nodeType === 'user-webpage' ? 300 : 300;
+      expandedWidth = 375; // Or keep existing logic: const expandedWidth = nodeType === 'user-webpage' ? 375 : 500;
+  }
+
+  const nodeBorderColor = classNames({
+      "border-sky-400": nodeType === "llm-question" || nodeType === "user-question",
+      "border-green-400": nodeType === "llm-answer",
+      "border-purple-400": nodeType === "user-file",
+      "border-orange-400": nodeType === "user-webpage",
+  });
+
   return (
-    <>
+    <motion.div
+      ref={ref} // Attach measure ref to the outer motion div
+      layout="position"
+      className={classNames(
+        "interactive-node border-[3px] bg-white text-black rounded p-2 shadow-sm group", // Added group for hover effects
+        {
+          "opacity-100": isFocused,
+          "opacity-60": !isFocused,
+          "ring-2 ring-blue-500 ring-offset-1": selected, // Changed ring color
+        },
+        nodeBorderColor // Apply dynamic border color class
+      )}
+      style={{
+        // Let motion handle width animation based on isExpanded
+        minHeight: 50,
+        position: "relative",
+        height: 'auto', // Allow natural height adjustment
+        borderColor: isFocused ? "blue" : undefined, // Override border if focused
+        zIndex: isFocused ? 10 : 1,
+      }}
+      onClick={handleNodeClick}
+      onMouseMove={handleNodeMouseMove}
+      onMouseLeave={handleNodeMouseLeave}
+      initial={{ opacity: 0, scale: 0.8 }}
+      animate={{
+          opacity: 1,
+          scale: 1,
+          width: isExpanded ? expandedWidth : contentWidth, // Explicitly animate width
+          // Height is implicitly handled by style: 'auto'
+      }}
+      exit={{ opacity: 0, scale: 0.5, transition: { duration: 0.15 } }} // Faster exit
+      transition={{ type: "spring", stiffness: 150, damping: 20, duration: 0.3 }}
+      onAnimationComplete={handleAnimationComplete} // Call when animation finishes
+    >
+      {/* Handles need to be direct children or use portals if nested deeper */}
+      <Handle type="target" position={Position.Left} className="!bg-gray-400 handle-custom handle-target" />
+      <Handle type="source" position={Position.Right} className="!bg-gray-400 handle-custom handle-source" onMouseDown={handleConnectionMouseDown} />
+
+      {/* Inner Content Wrapper - Apply ref here */}
       <div
-        ref={nodeRef}
-        className={classNames(
-          "interactive-node border-[3px] bg-white text-black rounded p-2 shadow-sm",
-          {
-            "border-sky-400":
-              nodeType === "llm-question" || nodeType === "user-question",
-            "border-green-400": nodeType === "llm-answer",
-            "border-purple-400": nodeType === "user-file",
-            "border-orange-400": nodeType === "user-webpage",
-            "opacity-100": isFocused,
-            "opacity-60": !isFocused,
-            "ring-2 ring-yellow-400 ring-offset-1": selected,
-          }
-        )}
-        style={{
-          maxWidth: nodeType === "llm-answer" && answer.length > 800 ? 500 : 300,
-          minHeight: 50,
-          position: "relative",
-        }}
-        onClick={handleNodeClick}
-        onMouseMove={handleNodeMouseMove}
-        onMouseLeave={handleNodeMouseLeave}
+        ref={contentRef}
+        className="node-content-wrapper"
+        style={{ maxHeight: `${maxNodeHeightPx}px`, overflowY: "auto" }}
       >
-        <Handle type="target" position={Position.Left} className="!bg-gray-400" />
-        <Handle type="source" position={Position.Right}
-        className="!bg-gray-400" />
-        <div
-          className="node-content-wrapper"
-          style={{ maxHeight: maxNodeHeightPx, overflowY: "auto" }}
-        >
-          {isLoading && (
-            <div className="absolute top-1 right-1 text-xs text-gray-500 flex items-center">
-              <CogIcon className="w-3 h-3 mr-1 animate-spin" /> Processing...
-            </div>
-          )}
-          {errorMessage && (
-            <div className="text-xs text-red-600 bg-red-100 p-1 rounded mt-1 flex items-center">
-              <ExclamationTriangleIcon className="w-3 h-3 mr-1 flex-shrink-0" />
-              <span className="truncate">{errorMessage}</span>
-            </div>
-          )}
-          <div className="prose prose-sm max-w-none prose-p:my-1 prose-li:my-0.5 [&>*:first-child]:mt-0">
-            {renderContent()}
+        {isLoading && (
+          <div className="absolute top-1 right-1 text-xs text-gray-500 flex items-center">
+            <CogIcon className="w-3 h-3 mr-1 animate-spin" /> Processing...
           </div>
+        )}
+        {errorMessage && (
+          <div className="text-xs text-red-600 bg-red-100 p-1 rounded mt-1 flex items-center">
+            <ExclamationTriangleIcon className="w-3 h-3 mr-1 flex-shrink-0" />
+            <span className="truncate">{errorMessage}</span>
+          </div>
+        )}
+        {/* Prose container for consistent markdown styling */}
+        <div className="prose prose-sm max-w-none prose-p:my-1 prose-li:my-0.5 [&>*:first-child]:mt-0">
+          {renderContent()}
         </div>
-        {connectionPoint && !isDraggingConnection && (
-          <div
-            style={{
-              position: "absolute",
-              left: connectionPoint.x - 12,
-              top: connectionPoint.y - 12,
-              zIndex: 10,
-              width: 24,
-              height: 24,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              pointerEvents: "auto",
-            }}
-          >
-            <div
-              className="bg-green-400 animate-pulse rounded-full shadow-lg border-2 border-white cursor-pointer"
-              style={{ width: 16, height: 16 }}
-              title="Add connection"
-              onMouseDown={handleConnectionMouseDown}
-            />
-          </div>
-        )}
-        {pendingConnection && isDraggingConnection && pendingConnection.from && pendingConnection.to && (
-          <svg
-            style={{
-              position: "fixed",
-              left: 0,
-              top: 0,
-              pointerEvents: "none",
-              zIndex: 1000,
-            }}
-            width={window.innerWidth}
-            height={window.innerHeight}
-          >
-            <line
-              x1={pendingConnection.from.x}
-              y1={pendingConnection.from.y}
-              x2={pendingConnection.to.x}
-              y2={pendingConnection.to.y}
-              stroke="#22c55e"
-              strokeWidth={3}
-              strokeDasharray="6 3"
-              markerEnd="url(#arrowhead)"
-            />
-            <defs>
-              <marker
-                id="arrowhead"
-                markerWidth="8"
-                markerHeight="8"
-                refX="8"
-                refY="4"
-                orient="auto"
-                markerUnits="strokeWidth"
-              >
-                <path d="M0,0 L8,4 L0,8" fill="#22c55e" />
-              </marker>
-            </defs>
-          </svg>
-        )}
       </div>
-      <NodeTypeModal
-        open={showTypeModal}
-        onSelect={handleTypeSelect}
-        onClose={() => setShowTypeModal(false)}
-      />
-    </>
+
+      {/* Connection Point Visualization - Needs correct positioning relative to motion.div */}
+      {connectionPoint && !isDraggingConnection && (
+        <div
+          style={{
+            position: "absolute",
+            // Adjust based on where connectionPoint x/y are relative to
+            left: connectionPoint.x - 8, // Center the dot
+            top: connectionPoint.y - 8,
+            zIndex: 15, // Above content
+            width: 16,
+            height: 16,
+            pointerEvents: "auto",
+          }}
+        >
+          <div
+            className="bg-green-400 animate-pulse rounded-full shadow-lg border-2 border-white cursor-pointer w-full h-full"
+            title="Drag to connect"
+            onMouseDown={handleConnectionMouseDown}
+          />
+        </div>
+      )}
+
+      {/* Pending Connection Line (SVG) - Needs to be outside, possibly in Flow component */}
+      {/* This SVG should likely be rendered at the Flow level, not inside each node */}
+      {/* {pendingConnection && isDraggingConnection && pendingConnection.from && pendingConnection.to && ( ... SVG code ... )} */}
+
+    </motion.div>
+    /* NodeTypeModal likely needs to be rendered outside the motion.div, perhaps sibling or at Flow level */
+    /* <NodeTypeModal open={showTypeModal} onSelect={handleTypeSelect} onClose={() => setShowTypeModal(false)} /> */
   );
   console.log("function InteractiveNode finished");
 };

@@ -80,8 +80,20 @@ const layoutElements = (
 
   nodes.forEach((node) => {
     // Re-enable dynamic dims, using v12's node.measured
-    const width = node.measured?.width ?? defaultNodeWidth;
-    const height = node.measured?.height ?? defaultNodeHeight;
+    // Prioritize dimensions from our nodeDims state if available
+    const nodeSpecificDims = nodeDims[node.id];
+    const width = nodeSpecificDims?.width ?? node.measured?.width ?? defaultNodeWidth;
+    const height = nodeSpecificDims?.height ?? node.measured?.height ?? defaultNodeHeight;
+
+    // --- DEBUG LOGGING for parent node dimensions when children might be added ---
+    if (node.id.startsWith('a-')) { // Check if it's an answer node
+        const childNodesExist = nodes.some(n => n.data?.parent === node.id);
+        if (childNodesExist) {
+             console.log(`Layout: Using dimensions for potentially expanded parent ${node.id}: W=${width}, H=${height} (Source: ${nodeSpecificDims ? 'nodeDims' : node.measured ? 'measured' : 'default'})`);
+        }
+    }
+    // --- END DEBUG LOGGING ---
+
     dagreGraph.setNode(node.id, {
         width: width, // Use calculated width
         height: height, // Use calculated height
