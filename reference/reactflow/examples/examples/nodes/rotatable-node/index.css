@@ -1,0 +1,46 @@
+@import url('./xy-theme.css');
+
+html,
+body {
+  margin: 0;
+  font-family: sans-serif;
+  box-sizing: border-box;
+}
+
+#app {
+  width: 100vw;
+  height: 100vh;
+}
+
+.react-flow__node-rotatableNode {
+  border: 0;
+  box-shadow: 0;
+}
+
+.rotatable-node {
+  transform-origin: center center;
+  box-sizing: border-box;
+}
+
+.rotatable-node__handle {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  background: #3367d9;
+  left: 50%;
+  top: -30px;
+  border-radius: 100%;
+  transform: translate(-50%, -50%);
+  cursor: alias;
+}
+
+.rotatable-node__handle:after {
+  content: '';
+  display: block;
+  position: absolute;
+  width: 1px;
+  height: 30px;
+  background: #3367d9;
+  left: 4px;
+  top: 5px;
+}

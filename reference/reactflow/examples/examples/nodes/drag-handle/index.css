@@ -1,0 +1,27 @@
+@import url('./xy-theme.css');
+
+html,
+body {
+  margin: 0;
+  font-family: sans-serif;
+  box-sizing: border-box;
+}
+
+#app {
+  width: 100vw;
+  height: 100vh;
+}
+
+.drag-handle__label {
+  display: flex;
+  align-items: center;
+}
+
+.drag-handle__custom {
+  display: inline-block;
+  width: 20px;
+  height: 20px;
+  background-color: teal;
+  margin-left: 15px;
+  border-radius: 50%;
+}

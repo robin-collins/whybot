@@ -1,77 +1,58 @@
-import { useEffect, useRef, useState } from 'react';
-import {
-  useStore,
-  useStoreApi,
-  type OnNodesChange,
-  type NodeChange,
-} from '@xyflow/react';
+import React, { useState, useEffect } from 'react';
+import { useStore, type NodeChange } from '@xyflow/react';
 
-type ChangeLoggerProps = {
-  color?: string;
-  limit?: number;
-};
+// Selectors to get node changes and dimensions
+const nodeChangesSelector = (state) => state.nodeChanges;
+const nodeInternalsSelector = (state) => state.nodeInternals;
 
-type ChangeInfoProps = {
-  change: NodeChange;
-};
-
-function ChangeInfo({ change }: ChangeInfoProps) {
-  const id = 'id' in change ? change.id : '-';
-  const { type } = change;
-
-  return (
-    <div className="mb-2 p-2 bg-gray-100 rounded border border-gray-200">
-      <div className="text-xs font-medium">Node ID: {id}</div>
-      <div>
-        {type === 'add' ? JSON.stringify(change.item, null, 2) : null}
-        {type === 'dimensions'
-          ? `dimensions: ${change.dimensions?.width} × ${change.dimensions?.height}`
-          : null}
-        {type === 'position'
-          ? `position: ${change.position?.x.toFixed(
-              1,
-            )}, ${change.position?.y.toFixed(1)}`
-          : null}
-        {type === 'remove' ? 'remove' : null}
-        {type === 'select' ? (change.selected ? 'select' : 'unselect') : null}
-      </div>
-    </div>
-  );
+// Helper function to format node dimensions
+function formatNodeDimensions(node) {
+  if (!node || !node.measured || typeof node.measured.width === 'undefined' || typeof node.measured.height === 'undefined') {
+    return 'dimensions: N/A'; // Return N/A if dimensions aren't available
+  }
+  return `dimensions: ${Math.round(node.measured.width)} × ${Math.round(node.measured.height)}`;
 }
 
-export default function ChangeLogger({ limit = 20 }: ChangeLoggerProps) {
-  const [changes, setChanges] = useState<NodeChange[]>([]);
-  const onNodesChangeIntercepted = useRef(false);
-  const onNodesChange = useStore((s) => s.onNodesChange);
-  const store = useStoreApi();
+function ChangeLogger() {
+  const nodeChanges = useStore(nodeChangesSelector);
+  const nodeInternals = useStore(nodeInternalsSelector);
+  const [loggedChanges, setLoggedChanges] = useState([]);
 
   useEffect(() => {
-    if (!onNodesChange || onNodesChangeIntercepted.current) {
-      return;
+    if (nodeChanges?.length) {
+      // Log only the most recent batch of changes for simplicity
+      setLoggedChanges(prev => [
+        ...prev,
+        ...nodeChanges.map(change => ({
+          id: change.id,
+          type: change.type,
+          change: change, // Store the whole change object if needed
+        }))
+      ].slice(-10)); // Keep only the last N changes
     }
-
-    onNodesChangeIntercepted.current = true;
-    const userOnNodesChange = onNodesChange;
-
-    const onNodesChangeLogger: OnNodesChange = (changes) => {
-      userOnNodesChange(changes);
-
-      setChanges((oldChanges) => [...changes, ...oldChanges].slice(0, limit));
-    };
-
-    store.setState({ onNodesChange: onNodesChangeLogger });
-  }, [onNodesChange, limit]);
+  }, [nodeChanges]);
 
   return (
-    <div className="fixed top-16 left-4 w-80 max-h-[70vh] overflow-y-auto bg-white bg-opacity-90 backdrop-blur p-4 rounded-lg shadow z-50">
-      <div className="text-lg font-semibold mb-2">Change Logger</div>
-      {changes.length === 0 ? (
-        <div className="text-sm text-gray-600">No changes triggered</div>
-      ) : (
-        changes.map((change, index) => (
-          <ChangeInfo key={index} change={change} />
-        ))
-      )}
+    <div className="react-flow__devtools-changelogger absolute top-2 left-2 z-10 p-3 bg-gray-800 bg-opacity-80 text-white text-xs rounded-md shadow-lg max-h-60 overflow-y-auto w-64 font-mono">
+      <h3 className="text-sm font-semibold mb-2 border-b border-gray-600 pb-1">Change Logger</h3>
+      {loggedChanges.length === 0 && <p className="text-gray-400">No changes logged yet.</p>}
+      <ul className="space-y-1">
+        {loggedChanges.map((log, index) => {
+          const node = nodeInternals.get(log.id);
+          const dimensions = node ? formatNodeDimensions(node) : 'N/A';
+          return (
+            <li key={index} className="p-1 bg-gray-700 rounded-sm">
+              <div>Node ID: {log.id}</div>
+              <div>Type: {log.type}</div>
+              <div className="text-gray-300">{dimensions}</div>
+              {/* Optional: Display full change details */}
+              {/* <pre className="mt-1 text-gray-400 text-[10px] overflow-x-auto">{JSON.stringify(log.change, null, 2)}</pre> */}
+            </li>
+          );
+        })}
+      </ul>
     </div>
   );
 }
+
+export default ChangeLogger;

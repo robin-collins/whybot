@@ -1,3 +1,18 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* Custom overrides for React Flow Controls */
+/* Increase specificity by targeting button within the controls container */
+.react-flow__controls .react-flow__controls-button {
+  background-color: #4a5568; /* Tailwind gray-700 */
+  color: #f7fafc; /* Tailwind gray-100 */
+  border: 1px solid #718096; /* Tailwind gray-600 */
+  box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06); /* Tailwind shadow-md */
+  transition: background-color 0.2s ease-in-out;
+}
+
+.react-flow__controls .react-flow__controls-button:hover {
+  background-color: #2d3748; /* Tailwind gray-800 */
+  border-color: #4a5568; /* Tailwind gray-700 */
+}

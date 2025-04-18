@@ -71,7 +71,7 @@ const layoutElements = (
 
   const defaultNodeWidth = 250;
   const defaultNodeHeight = 170;
-  dagreGraph.setGraph({ rankdir: direction, nodesep: 250, ranksep: 400 }); // Increased ranksep significantly
+  dagreGraph.setGraph({ rankdir: direction, nodesep: 125, ranksep: 200 }); // Halved spacing
 
   if (!nodes || nodes.length === 0) {
       console.warn("layoutElements called with no nodes.");
