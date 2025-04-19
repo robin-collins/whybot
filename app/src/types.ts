@@ -74,4 +74,15 @@ export interface ScoredQuestion {
   score: number;
 }
 
+/**
+ * Represents the structure of messages received from the WebSocket server
+ * specifically for the `openai_server` function in `Flow.tsx`.
+ */
+export interface ServerWebSocketMessage {
+  nodeId: string;
+  type: 'chunk' | 'done' | 'error';
+  content?: string; // For 'chunk' type
+  message?: string; // For 'error' type
+}
+
 // Add other shared types if needed

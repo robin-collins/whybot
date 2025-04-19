@@ -236,7 +236,7 @@ export const InteractiveNode: React.FC<NodeProps<AppInteractiveNode>> = ({
     currentDims, // Original prop
     onGenerateAnswer,
     isAnswering,
-  } = data as InteractiveNodeData;
+  } = data;
 
   const { focusedId, isGenerating, updateNode, addNode, setFocusedId } =
     useAppStore(useShallow((state) => ({
@@ -469,11 +469,15 @@ export const InteractiveNode: React.FC<NodeProps<AppInteractiveNode>> = ({
   }
 
   const handleNodeMouseMove = (e: React.MouseEvent) => {
-    // Use the outer ref (motion.div) for detecting hover edge
     const outerDiv = (e.target as HTMLElement).closest('.interactive-node');
     if (!outerDiv) return;
     const pt = getNearestEdgeAndPoint(e, outerDiv as HTMLElement);
     setConnectionPoint(pt);
+    // --- LOGGING: Hovering over handle ---
+    if (pt && pt.edge === 'left') { // Source handle is now on the Left
+      console.log(`InteractiveNode (${id}): Hovering over source handle (Left) at point`, pt);
+    }
+    // --- END LOGGING ---
   };
 
   const handleNodeMouseLeave = () => setConnectionPoint(null);
@@ -481,16 +485,28 @@ export const InteractiveNode: React.FC<NodeProps<AppInteractiveNode>> = ({
   // --- Connection drag logic with hold ---
   const handleConnectionMouseDown = (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!connectionPoint) return;
+    const currentPoint = connectionPoint; // Capture current connection point state
+    if (!currentPoint) {
+      console.log(`InteractiveNode (${id}): MouseDown but no connectionPoint.`);
+      return;
+    }
+    // --- LOGGING: Initial Click on Handle (before drag confirmation) ---
+    console.log(`InteractiveNode (${id}): MouseDown on handle (Edge: ${currentPoint.edge}) at point`, currentPoint);
+    // --- END LOGGING ---
+
     const outerDiv = (e.target as HTMLElement).closest('.interactive-node');
     if (!outerDiv) return;
 
     isMouseDown.current = true;
     const rect = outerDiv.getBoundingClientRect();
-    const startX = rect.left + connectionPoint.x;
-    const startY = rect.top + connectionPoint.y;
+    const startX = rect.left + currentPoint.x;
+    const startY = rect.top + currentPoint.y;
+
     dragTimer.current = setTimeout(() => {
       if (isMouseDown.current) {
+        // --- LOGGING: Handle Picked Up (Drag confirmed) ---
+        console.log(`InteractiveNode (${id}): Handle picked up (drag confirmed) from edge ${currentPoint.edge}`);
+        // --- END LOGGING ---
         setIsDraggingConnection(true);
         setDragPos({ x: e.clientX, y: e.clientY });
         setPendingConnection({ from: { x: startX, y: startY }, to: { x: e.clientX, y: e.clientY } });
@@ -500,6 +516,9 @@ export const InteractiveNode: React.FC<NodeProps<AppInteractiveNode>> = ({
           setPendingConnection(prev => prev ? { ...prev, to: { x: moveEvent.clientX, y: moveEvent.clientY } } : null);
         };
         const handleUp = (upEvent: MouseEvent) => {
+          // --- LOGGING: Handle Dropped ---
+          console.log(`InteractiveNode (${id}): Handle dropped at screen coordinates (${upEvent.clientX}, ${upEvent.clientY})`);
+          // --- END LOGGING ---
           setIsDraggingConnection(false);
           setShowTypeModal(true);
           setModalAt({ x: upEvent.clientX, y: upEvent.clientY });
@@ -507,13 +526,19 @@ export const InteractiveNode: React.FC<NodeProps<AppInteractiveNode>> = ({
           window.removeEventListener("mousemove", handleMove);
           window.removeEventListener("mouseup", handleUp);
           isMouseDown.current = false;
+          if (dragTimer.current) clearTimeout(dragTimer.current); // Clear timer on successful drop
         };
         window.addEventListener("mousemove", handleMove);
         window.addEventListener("mouseup", handleUp);
       }
-    }, 100);
+    }, 100); // 100ms hold to confirm drag
 
     const handleEarlyUp = () => {
+      if (isMouseDown.current) { // Only log if the mousedown was on the handle
+         // --- LOGGING: Handle Clicked (not dragged) ---
+         console.log(`InteractiveNode (${id}): MouseUp early (click, no drag) on edge ${currentPoint?.edge}`);
+         // --- END LOGGING ---
+      }
       isMouseDown.current = false;
       if (dragTimer.current) clearTimeout(dragTimer.current);
       window.removeEventListener("mouseup", handleEarlyUp);
@@ -856,23 +881,24 @@ export const InteractiveNode: React.FC<NodeProps<AppInteractiveNode>> = ({
       </div>
 
       {/* Connection Point Visualization - Needs correct positioning relative to motion.div */}
-      {connectionPoint && !isDraggingConnection && (
+      {connectionPoint && !isDraggingConnection && connectionPoint.edge === 'left' && ( // Only show dot on source handle
         <div
           style={{
             position: "absolute",
-            // Adjust based on where connectionPoint x/y are relative to
-            left: connectionPoint.x - 8, // Center the dot
+            left: connectionPoint.x - 8,
             top: connectionPoint.y - 8,
-            zIndex: 15, // Above content
+            zIndex: 15,
             width: 16,
             height: 16,
-            pointerEvents: "auto",
+            pointerEvents: "auto", // Make the dot clickable
           }}
+          // Attach mouse down directly to the visualization div
+          onMouseDown={handleConnectionMouseDown}
         >
           <div
             className="bg-green-400 animate-pulse rounded-full shadow-lg border-2 border-white cursor-pointer w-full h-full"
             title="Drag to connect"
-            onMouseDown={handleConnectionMouseDown}
+            // No onMouseDown needed here if the parent div handles it
           />
         </div>
       )}

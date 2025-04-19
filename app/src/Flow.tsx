@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState, memo } from "react";
+import React, { useCallback, useEffect, useState, useRef } from "react";
 
 // import ReactFlow, {
 //   Controls,
@@ -14,49 +14,43 @@ import React, { useCallback, useEffect, useRef, useState, memo } from "react";
 //   useReactFlow,
 //   OnConnectStartParams,
 // } from "reactflow";
-import dagre from "dagre";
 
 import {
   Controls,
   MiniMap,
   Background,
-  Position,
   ReactFlowProvider,
-  Viewport,
   useReactFlow,
   OnConnectStartParams,
   ReactFlow,
-  addEdge,
   useEdgesState,
   useNodesState,
+  useNodes,
   type Edge,
-  type OnConnect,
   type Node,
+  type OnConnect,
   NodeTypes,
   EdgeTypes,
-  NodeProps,
   OnConnectStart,
-  useNodes,
   ViewportPortal,
-  Panel,
   BackgroundVariant,
   XYPosition,
   useStore,
   type ReactFlowState,
   ConnectionLineType,
-  type Connection,
   type DefaultEdgeOptions,
   MarkerType,
+  NodeChange,
+  EdgeChange,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 // DevTools components
-import NodeInspector from './NodeInspector';
 import ChangeLogger from './ChangeLogger';
 import ViewportLogger from './ViewPortLogger';
 
-import { InteractiveNode, InteractiveNodeData } from "./InteractiveNode";
+import { InteractiveNode } from "./InteractiveNode";
 import { DeletableEdge } from "./DeletableEdge";
-import { NodeDims } from "./types";
+import { NodeDims, ServerWebSocketMessage, QATreeNode } from "./types";
 import { getFingerprint } from "./main";
 import { SERVER_HOST_WS } from "./constants";
 // import { getNodeColor } from './nodeTypes'; // Commenting out, assuming it's defined elsewhere or not needed for MiniMap base color
@@ -69,9 +63,6 @@ import {
   ArrowsPointingOutIcon,
   CursorArrowRaysIcon,
   ViewfinderCircleIcon,
-  QueueListIcon,
-  CodeBracketSquareIcon,
-  MapIcon,
 } from "@heroicons/react/24/solid";
 // --- End Import Icons ---
 
@@ -108,25 +99,15 @@ export const openai_server = async (
       return;
     }
 
-    // Create an abort controller for cleanup
-    const cleanup = () => {
-      if (ws && ws.readyState < 2) {
-        isAborted = true;
-        console.log(
-          `Manually closing WebSocket for node ${opts.nodeId} during cleanup`
-        );
-        ws.close(1000, "Client cleanup");
-      }
-    };
-
     ws.onopen = () => {
+      if (!ws) return;
       console.log(`WebSocket opened for node ${opts.nodeId}`);
       if (isAborted) {
         console.log(
           `Connection opened but marked as aborted for node ${opts.nodeId}, closing immediately`
         );
         ws?.close(1000, "Aborted after open");
-        reject(new Error("Connection aborted after open")); // Reject if aborted on open
+        reject(new Error("Connection aborted after open"));
         return;
       }
 
@@ -141,74 +122,54 @@ export const openai_server = async (
     };
 
     ws.onmessage = (event) => {
-      if (isAborted) return; // Skip processing if aborted
+      if (isAborted || !ws) return;
 
       try {
-        const message = JSON.parse(event.data);
-        // Ensure message has nodeId and type
+        const message: ServerWebSocketMessage = JSON.parse(event.data as string);
         if (message.nodeId !== opts.nodeId) {
-            // Ignore messages not for this specific stream request
             return;
         }
 
         if (message.type === 'chunk') {
-            opts.onChunk(message.content); // Pass only content for chunks
+            opts.onChunk(message.content ?? "");
         } else if (message.type === 'done') {
             console.log(`Stream completed via 'done' message for node ${opts.nodeId}`);
-            resolve(); // Resolve promise on 'done'
-            ws?.close(1000, "Stream completed"); // Close WS cleanly
+            resolve();
+            ws?.close(1000, "Stream completed");
         } else if (message.type === 'error') {
             const errorMsg = message.message || `Unknown stream error for node ${opts.nodeId}`;
             console.error(`Stream error via 'error' message for node ${opts.nodeId}:`, errorMsg);
-            reject(new Error(errorMsg)); // Reject promise on 'error'
-            ws?.close(1001, "Stream error"); // Close WS indicating error
+            reject(new Error(errorMsg));
+            ws?.close(1001, "Stream error");
         } else {
-             // Handle unexpected message types if necessary
-            console.warn(`Received unexpected message type: ${message.type} for node ${opts.nodeId}`);
+            console.warn(`Received unexpected message type: ${(message as any).type} for node ${opts.nodeId}`);
         }
       } catch (e) {
-        console.error(`Error parsing WebSocket message for node ${opts.nodeId}:`, event.data, e);
-        // Don't reject here, wait for server error or timeout? Or reject?
-        // Let's reject for now if parsing fails during active stream
-        reject(new Error(`Failed to parse message: ${e}`));
+        console.error(`Error parsing WebSocket message for node ${opts.nodeId}:`, event.data as string, e);
+        reject(new Error(`Failed to parse message: ${String(e)}`));
         ws?.close(1003, "Invalid message format");
       }
     };
 
     ws.onerror = (event) => {
-      if (isAborted) {
-        console.log(
-          `Ignoring WebSocket error for aborted connection (node ${opts.nodeId})`
-        );
-        return; // Don't reject if already aborted
-      }
-      // This usually fires for connection issues *before* messages are handled
+      if (isAborted || !ws) return;
       const error = event instanceof Event ? "WebSocket connection error" : String(event);
-      console.error(`WebSocket onerror for node ${opts.nodeId}:`, event); // Log the raw event
+      console.error(`WebSocket onerror for node ${opts.nodeId}:`, event);
       reject(new Error(error || "WebSocket connection error"));
-      // WS state might already be CLOSING or CLOSED here
     };
 
     ws.onclose = (event) => {
       console.log(
         `WebSocket closed event for node ${opts.nodeId}. Code: ${event.code}, Reason: ${event.reason}, Clean: ${event.wasClean}`
       );
-      // If the promise hasn't already been resolved/rejected by onmessage ('done'/'error')
-      // then the closure was unexpected or due to an earlier onerror.
-      // We might reject here if it wasn't clean and wasn't aborted.
+      ws = null;
       if (!isAborted && !event.wasClean) {
-          // Avoid rejecting if already resolved/rejected by 'done'/'error' messages handling
-          // This requires tracking promise state, which is complex.
-          // Let's rely on 'done'/'error' messages for explicit completion/failure.
           console.warn(`WebSocket for node ${opts.nodeId} closed uncleanly without explicit done/error message.`);
-          // Optionally reject here as a fallback if needed, e.g.:
-          // reject(new Error(`WebSocket closed unexpectedly. Code: ${event.code}`));
       }
     };
 
   });
 
-  // Add cleanup method to promise
   (promise as any).cleanup = () => {
     if (ws && ws.readyState < 2) {
       isAborted = true;
@@ -228,7 +189,7 @@ type FlowProps = {
   nodeDims: NodeDims;
   deleteBranch: (id: string) => void;
   onConnectStart: OnConnectStart;
-  onConnectEnd: (event: MouseEvent | TouchEvent) => void;
+  onConnectEnd: OnConnect;
 };
 export const Flow: React.FC<FlowProps> = (props) => {
   // console.log("function Flow started");
@@ -239,223 +200,204 @@ export const Flow: React.FC<FlowProps> = (props) => {
     props.flowEdges
   );
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
-  const {
-    fitView,
-    zoomIn,
-    zoomOut,
-    setCenter,
-    getNodes,
-    getViewport,
-    setViewport,
-    zoomTo,
-  } = useReactFlow();
-  const [currentZoom, setCurrentZoom] = useState(1);
+  const reactFlowInstance = useReactFlow();
+  const { getNodes, getViewport } = useReactFlow();
 
-  // State for Dev Tools Visibility
-  const [showNodeInspector, setShowNodeInspector] = useState(false);
-  const [showChangeLogger, setShowChangeLogger] = useState(false);
-  const [showViewportLogger, setShowViewportLogger] = useState(false);
-  const [showMiniMap, setShowMiniMap] = useState(true);
+  const onNodesChange = useCallback(
+    (changes: NodeChange[]) => {
+      onNodesChangeDefault(changes);
+    },
+    [onNodesChangeDefault]
+  );
+
+  const onEdgesChange = useCallback(
+    (changes: EdgeChange[]) => {
+      onEdgesChangeDefault(changes);
+    },
+    [onEdgesChangeDefault]
+  );
 
   useEffect(() => {
     setNodes(props.flowNodes);
-  }, [props.flowNodes]);
+  }, [props.flowNodes, setNodes]);
 
   useEffect(() => {
     setEdges(props.flowEdges);
-  }, [props.flowEdges]);
+  }, [props.flowEdges, setEdges]);
 
-  const laid = React.useMemo(() => {
-    return { nodes: props.flowNodes, edges: props.flowEdges };
-  }, [props.flowNodes, props.flowEdges]);
+  // --- Controls Callbacks ---
+  const handleCenterGraph = useCallback(() => {
+    void reactFlowInstance.fitView();
+  }, [reactFlowInstance]);
 
-  // --- Custom Control Handlers ---
   const handleZoomIn = useCallback(() => {
-    zoomIn({ duration: 300 });
-  }, [zoomIn]);
+    void reactFlowInstance.zoomIn();
+  }, [reactFlowInstance]);
 
   const handleZoomOut = useCallback(() => {
-    zoomOut({ duration: 300 });
-  }, [zoomOut]);
+    void reactFlowInstance.zoomOut();
+  }, [reactFlowInstance]);
 
-  const handleFitView = useCallback(() => {
-    fitView({ duration: 300, padding: 0.1 });
-  }, [fitView]);
+  const handleResetZoom = useCallback(() => {
+    void reactFlowInstance.setViewport({ x: 0, y: 0, zoom: 1 });
+  }, [reactFlowInstance]);
 
-  const handleCenterNode = useCallback(
-    (nodeId: string | null) => {
-      if (!nodeId) return;
-      const allNodes = getNodes();
-      const node = allNodes.find((n) => n.id === nodeId);
-      if (node) {
-        const x = node.position.x + (node.width ?? 0) / 2;
-        const y = node.position.y + (node.height ?? 0) / 2;
-        setCenter(x, y, { zoom: 1, duration: 500 });
-      } else {
-        console.warn(`Node with ID ${nodeId} not found for centering.`);
-      }
-    },
-    [getNodes, setCenter]
-  );
-
-  const handleCenterFirst = useCallback(() => {
-    // The initial seed question node consistently has the ID 'q-0'
-    handleCenterNode("q-0");
-  }, [getNodes, handleCenterNode]);
-
-  const handleCenterLast = useCallback(() => {
-    const allNodes = getNodes();
-    if (allNodes.length === 0) return;
-    // Find the node with the highest numeric part in its ID or simply the last one added
-    // This is heuristic; a better approach depends on how node IDs are guaranteed to be ordered or structured.
-    const lastNode = allNodes[allNodes.length - 1]; // Or sort by creation time/ID logic if available
-    handleCenterNode(lastNode.id);
-  }, [getNodes, handleCenterNode]);
-
-  // Update slider when viewport changes
-  useEffect(() => {
-    const updateZoomState = () => {
-      setCurrentZoom(getViewport().zoom);
-    };
-    // Hook into viewport changes if possible, otherwise poll (less ideal)
-    // React Flow doesn't have a direct onViewportChange prop on the main component,
-    // but useReactFlow hook updates frequently. We can use an effect dependency or a slight delay.
-    // For simplicity here, let's update based on node/edge changes or manual triggers.
-    // A more robust solution might involve wrapper contexts or observing viewport state.
-    setCurrentZoom(getViewport().zoom);
-  }, [nodes, edges, getViewport]); // Update zoom state based on graph changes or viewport getter ref
-
-  const handleZoomSliderChange = useCallback(
-    (event: React.ChangeEvent<HTMLInputElement>) => {
-      const newZoom = parseFloat(event.target.value);
-      zoomTo(newZoom, { duration: 50 }); // Use zoomTo for smoother slider interaction
-      setCurrentZoom(newZoom); // Update slider state immediately
-    },
-    [zoomTo]
-  );
-  // --- End Custom Control Handlers ---
-
-  // --- Define Min/Max Zoom for Slider ---
-  const minZoomSlider = 0.1; // Match ReactFlow's minZoom
-  const maxZoomSlider = 2.5; // Define a reasonable max for the slider
-  // --- End Define Min/Max Zoom for Slider ---
-
-  // Put nodeColorFunc back as it's used by MiniMap
-  const nodeColorFunc = useCallback((node: Node) => {
-    // Basic color logic, refine as needed based on node type or data
-    switch (node.type) {
-      case 'input': return '#6ede87'; // Example color
-      case 'output': return '#6865A5'; // Example color
-      // Add cases for your actual node types if needed
-      default: return '#ff0072'; // Default color
+  const handleCenterOnFirstNode = useCallback(() => {
+    const firstNode = getNodes().find((n) => n.id === "0");
+    if (firstNode && firstNode.width && firstNode.height) {
+      const x = firstNode.position.x + firstNode.width / 2;
+      const y = firstNode.position.y + firstNode.height / 2;
+      const zoom = 1.8;
+      void reactFlowInstance.setCenter(x, y, { zoom, duration: 800 });
     }
-  }, []);
+  }, [getNodes, reactFlowInstance]);
 
-  // Define the default edge options with the custom marker AND style
+  const handleCenterOnLastNode = useCallback(() => {
+    const nodes = getNodes();
+    if (nodes.length > 0) {
+      const lastNode = nodes[nodes.length - 1];
+      if (lastNode && lastNode.width && lastNode.height) {
+        const x = lastNode.position.x + lastNode.width / 2;
+        const y = lastNode.position.y + lastNode.height / 2;
+        const zoom = 1.8;
+        void reactFlowInstance.setCenter(x, y, { zoom, duration: 800 });
+      }
+    }
+  }, [getNodes, reactFlowInstance]);
+
+  // --- Zoom State for Debugging ---
+  const [zoomLevel, setZoomLevel] = useState(1);
+
+  const onMove = useCallback(() => {
+    const { zoom } = getViewport();
+    setZoomLevel(zoom);
+  }, [getViewport]);
+  // --- End Controls Callbacks ---
+
+  const onConnectStart = useCallback(
+    (event: MouseEvent | TouchEvent, params: OnConnectStartParams) => {
+      console.log("onConnectStart", params);
+      props.onConnectStart(event as any, params as any);
+    },
+    [props]
+  );
+
+  const onConnectEnd = useCallback(
+    (event: MouseEvent | TouchEvent) => {
+      props.onConnectEnd(event as any);
+    },
+    [props]
+  );
+
   const defaultEdgeOptions: DefaultEdgeOptions = {
+    type: "deleteEdge",
     markerEnd: {
       type: MarkerType.ArrowClosed,
-      width: 20,
-      height: 20,
-      color: '#FF0072',
+      width: 10,
+      height: 10,
+      color: "#FF0072",
     },
     style: {
-      stroke: '#FF0072', // Set the edge line color
-      strokeWidth: 2,    // Increase stroke width to make marker appear larger
+      strokeWidth: 2,
+      stroke: "#FF0072",
+    },
+    data: {
+      deleteBranch: props.deleteBranch,
     },
   };
 
+  // console.log("Flow rendering with nodes:", nodes.length, "edges:", edges.length);
+
   return (
-    <div ref={reactFlowWrapper} className="w-full h-full fixed top-0 left-0">
+    <div
+      style={{
+        width: "100%",
+        height: "calc(100vh - 60px)",
+        position: "relative",
+      }}
+      ref={reactFlowWrapper}
+    >
       <ReactFlow
+        nodes={nodes}
+        edges={edges}
+        onNodesChange={onNodesChange}
+        onEdgesChange={onEdgesChange}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
-        nodes={laid.nodes}
-        edges={laid.edges}
-        onNodesChange={onNodesChangeDefault}
-        onEdgesChange={onEdgesChangeDefault}
-        panOnScroll
-        onConnectStart={props.onConnectStart}
-        onConnectEnd={props.onConnectEnd}
-        minZoom={minZoomSlider}
-        maxZoom={maxZoomSlider}
-        onMoveEnd={(_event, viewport) => {
-          console.log("Viewport changed:", viewport); // Log viewport
-          setCurrentZoom(viewport.zoom)
-        }}
-        onNodeClick={(_event, node) => {
-          console.log("Node clicked:", node); // Log clicked node data
-        }}
-        defaultMarkerColor='#b1b1b7'
-        elevateEdgesOnSelect={true}
-        ref={reactFlowWrapper}
-        data-testid="flow-canvas"
-        connectionLineType={ConnectionLineType.SmoothStep}
+        onConnectStart={onConnectStart}
+        onConnectEnd={onConnectEnd}
+        fitView
+        fitViewOptions={{ padding: 0.2 }}
         defaultEdgeOptions={defaultEdgeOptions}
+        connectionLineType={ConnectionLineType.Bezier}
+        connectionLineStyle={{ stroke: "#FF0072", strokeWidth: 2 }}
+        attributionPosition="bottom-right"
+        onMove={onMove}
       >
-        <Background variant={BackgroundVariant.Dots} gap={12} size={1} />
-        <Controls
-          position="top-left"
-          style={{ marginTop: '4rem' }}
+        <Controls showInteractive={false} position="bottom-center">
+          <button onClick={handleCenterOnFirstNode} title="Center on First Node">
+            <HomeIcon className="h-5 w-5" />
+          </button>
+          <button onClick={handleZoomIn} title="Zoom In">
+            <MagnifyingGlassPlusIcon className="h-5 w-5" />
+          </button>
+          <button onClick={handleZoomOut} title="Zoom Out">
+            <MagnifyingGlassMinusIcon className="h-5 w-5" />
+          </button>
+          <button onClick={handleCenterGraph} title="Center Graph">
+            <ArrowsPointingOutIcon className="h-5 w-5" />
+          </button>
+          <button onClick={handleResetZoom} title="Reset Zoom">
+            <CursorArrowRaysIcon className="h-5 w-5" />
+          </button>
+          <button onClick={handleCenterOnLastNode} title="Center on Last Node">
+            <ViewfinderCircleIcon className="h-5 w-5" />
+          </button>
+          <span className="react-flow__controls-button react-flow__controls-zoomlevel">
+            Zoom: {zoomLevel.toFixed(2)}
+          </span>
+        </Controls>
+        <MiniMap
+          nodeStrokeWidth={3}
+          zoomable
+          pannable
+          position="bottom-left"
         />
+        <Background variant={BackgroundVariant.Dots} gap={12} size={1} />
 
-        {showMiniMap && (
-          <MiniMap
-              nodeColor={nodeColorFunc}
-              nodeStrokeWidth={3}
-              zoomable
-              pannable
-              position="bottom-left"
-              maskColor="rgba(0,0,0,0.6)"
-              style={{ backgroundColor: "rgba(40, 40, 40, 0.85)" }}
-          />
-        )}
-
-        {showNodeInspector && <DevNodeInspector />}
-        {showChangeLogger && <ChangeLogger />}
-        {showViewportLogger && <ViewportLogger />}
-
-        <Panel position="top-right" className="z-10">
-        </Panel>
+        <ViewportPortal>
+          <div
+            style={{
+              position: "absolute",
+              top: 10,
+              left: 10,
+              background: "rgba(255, 255, 255, 0.8)",
+              padding: "5px",
+              borderRadius: "3px",
+              fontSize: "10px",
+              zIndex: 10,
+            }}
+          >
+            <ChangeLogger />
+          </div>
+          <div
+            style={{
+              position: "absolute",
+              top: 10,
+              right: 10,
+              background: "rgba(255, 255, 255, 0.8)",
+              padding: "5px",
+              borderRadius: "3px",
+              fontSize: "10px",
+              zIndex: 10,
+            }}
+          >
+            <ViewportLogger />
+          </div>
+        </ViewportPortal>
       </ReactFlow>
-      <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 z-10 flex flex-col items-center p-2 bg-gray-800 bg-opacity-70 rounded-lg shadow-lg space-y-2">
-         {/* Buttons Row (Nav + Toggles) */}
-         <div className="flex flex-row space-x-2">
-            {/* Nav Buttons */}
-            <button title="Center First Node" onClick={handleCenterFirst} className="p-2 text-white bg-gray-600 hover:bg-gray-500 rounded-md transition-colors duration-150"><HomeIcon className="w-4 h-4" /></button>
-            <button title="Zoom In" onClick={handleZoomIn} className="p-2 text-white bg-gray-600 hover:bg-gray-500 rounded-md transition-colors duration-150"><MagnifyingGlassPlusIcon className="w-4 h-4" /></button>
-            <button title="Reset Zoom" onClick={handleFitView} className="p-2 text-white bg-gray-600 hover:bg-gray-500 rounded-md transition-colors duration-150"><ArrowsPointingOutIcon className="w-4 h-4" /></button>
-            <button title="Zoom Out" onClick={handleZoomOut} className="p-2 text-white bg-gray-600 hover:bg-gray-500 rounded-md transition-colors duration-150"><MagnifyingGlassMinusIcon className="w-4 h-4" /></button>
-            <button title="Center Last Node" onClick={handleCenterLast} className="p-2 text-white bg-gray-600 hover:bg-gray-500 rounded-md transition-colors duration-150"><CursorArrowRaysIcon className="w-4 h-4" /></button>
-
-            {/* Separator */}
-            <div className="border-l border-gray-500 h-6 self-center mx-1"></div>
-
-            {/* Dev Tool Toggles */}
-            <button title="Toggle Node Inspector" onClick={() => setShowNodeInspector(s => !s)} className={`p-2 text-white rounded-md transition-colors duration-150 ${showNodeInspector ? 'bg-blue-600 hover:bg-blue-500' : 'bg-gray-600 hover:bg-gray-500'}`}><CodeBracketSquareIcon className="w-4 h-4" /></button>
-            <button title="Toggle Change Logger" onClick={() => setShowChangeLogger(s => !s)} className={`p-2 text-white rounded-md transition-colors duration-150 ${showChangeLogger ? 'bg-blue-600 hover:bg-blue-500' : 'bg-gray-600 hover:bg-gray-500'}`}><QueueListIcon className="w-4 h-4" /></button>
-            <button title="Toggle Viewport Logger" onClick={() => setShowViewportLogger(s => !s)} className={`p-2 text-white rounded-md transition-colors duration-150 ${showViewportLogger ? 'bg-blue-600 hover:bg-blue-500' : 'bg-gray-600 hover:bg-gray-500'}`}><ViewfinderCircleIcon className="w-4 h-4" /></button>
-            <button title="Toggle MiniMap" onClick={() => setShowMiniMap(s => !s)} className={`p-2 text-white rounded-md transition-colors duration-150 ${showMiniMap ? 'bg-blue-600 hover:bg-blue-500' : 'bg-gray-600 hover:bg-gray-500'}`}><MapIcon className="w-4 h-4" /></button>
-         </div>
-
-         {/* Slider Row */}
-         <div className="w-full px-2">
-           <input
-             type="range"
-             min={minZoomSlider}
-             max={maxZoomSlider}
-             step="0.05"
-             value={currentZoom}
-             onChange={handleZoomSliderChange}
-             className="w-full h-1 bg-gray-500 rounded-lg appearance-none cursor-pointer range-sm dark:bg-gray-700 accent-blue-500"
-             title={`Zoom: ${currentZoom.toFixed(2)}`}
-           />
-         </div>
-
-      </div>
     </div>
   );
-  // console.log("function Flow finished");
 };
 
 interface FlowProviderProps extends FlowProps {
@@ -464,11 +406,9 @@ interface FlowProviderProps extends FlowProps {
 }
 
 export const FlowProvider: React.FC<FlowProviderProps> = (props) => {
-  // console.log("function FlowProvider started");
   return (
     <ReactFlowProvider>
       <Flow {...props} />
-      {/* ViewportLogger and ChangeLogger moved inside Flow */}
     </ReactFlowProvider>
   );
 };
@@ -492,119 +432,3 @@ declare global {
 if (typeof window !== "undefined") {
   window.openai = openai_server;
 }
-
-// --- START DevNodeInspector Components ---
-
-// Helper component to display individual node info
-interface DevNodeInfoProps {
-  id: string;
-  position: XYPosition;
-  data?: any;
-  width?: number | null;
-  height?: number | null;
-  selected?: boolean;
-  dragging?: boolean;
-  measured?: { width?: number | null; height?: number | null };
-  parentId?: string;
-  hidden?: boolean;
-}
-
-function DevNodeInfo({ id, position, data, width, height, selected, dragging, measured, parentId, hidden }: DevNodeInfoProps) {
-  // Use measured dimensions if available, otherwise fallback
-  const nodeWidth = measured?.width ?? width ?? 0;
-  const nodeHeight = measured?.height ?? height ?? 0;
-
-  // Position the info to the LEFT of the node
-  const style: React.CSSProperties = {
-    position: 'absolute',
-    left: position.x,
-    top: position.y, // Align top edge with node's top edge
-    transform: 'translateX(-100%)', // Shift left by its own width
-    marginRight: '10px', // Add gap between inspector and node
-    background: 'rgba(30, 30, 30, 0.85)',
-    color: '#f0f0f0',
-    padding: '4px 8px',
-    fontSize: '11px',
-    border: '1px solid #555',
-    borderRadius: '4px',
-    zIndex: 1000,
-    whiteSpace: 'pre-wrap',
-    maxWidth: '250px',
-    fontFamily: 'monospace',
-    pointerEvents: 'none',
-    boxShadow: '0 2px 5px rgba(0,0,0,0.3)',
-  };
-
-  // Process data.answer for display (only if it exists and is a string)
-  let answerPreview = "";
-  let answerLength = 0;
-  const isQuestionNode = data?.nodeType === 'llm-question'; // Check node type
-
-  if (!isQuestionNode && data && typeof data.answer === 'string') {
-    const lines = data.answer.split('\n');
-    answerPreview = lines[0];
-    if (lines.length > 1 || data.answer.length > 100) {
-        answerPreview = answerPreview.substring(0, 100) + (lines.length > 1 || data.answer.length > 100 ? '...' : '');
-    }
-    answerLength = data.answer.length;
-  }
-
-  return (
-    <div style={style}>
-      <div>ID: {id}</div>
-      {parentId && <div style={{ color: '#cbd5e0' }}>Parent: {parentId}</div>}
-      {nodeWidth > 0 && nodeHeight > 0 ? (
-          <div>Dim: {`${nodeWidth.toFixed(0)}x${nodeHeight.toFixed(0)}`}</div>
-      ) : (
-          <div style={{ color: '#a0aec0' }}>Dim: N/A</div>
-      )}
-      <div>Pos: {`x:${position.x.toFixed(0)},y:${position.y.toFixed(0)}`}</div>
-
-      {/* Conditionally display answer info only for non-question nodes */}
-      {!isQuestionNode && (
-          <>
-            <div>Answer: {answerPreview || (data?.answer ? '[non-string answer]' : 'N/A')}</div>
-            {answerLength > 0 && <div style={{ color: '#a0aec0' }}>Length: {answerLength} chars</div>}
-          </>
-      )}
-      {/* If it IS a question node, maybe show the question text? */}
-      {isQuestionNode && data && typeof data.question === 'string' && (
-           <div style={{ color: '#e2e8f0' }}>Q: {data.question.substring(0, 100)}{data.question.length > 100 ? '...' : ''}</div>
-      )}
-
-      {/* Display Hidden status */}
-      {hidden && <div style={{ color: '#F56565' }}>Hidden: true</div>}
-
-      {selected && <div style={{ color: '#63B3ED' }}>Selected</div>}
-      {dragging && <div style={{ color: '#F6E05E' }}>Dragging</div>}
-    </div>
-  );
-}
-
-// The main NodeInspector component
-function DevNodeInspector() {
-  const nodes = useNodes();
-  // Access nodeLookup from the store, which likely contains the internal node data
-  const nodeLookup = useStore((state: ReactFlowState) => state.nodeLookup);
-
-  return (
-    <ViewportPortal>
-      {nodes.map((node) => {
-        // Get the potentially more detailed data from the lookup map
-        const lookupNode = nodeLookup.get(node.id);
-
-        // Prefer lookup node data if available, otherwise use the basic node object
-        const nodeProps = lookupNode ? { ...lookupNode } : { ...node };
-
-        return (
-          <DevNodeInfo
-            key={node.id}
-            {...nodeProps} // Spread the potentially more complete lookup node data
-          />
-        )
-      })}
-    </ViewportPortal>
-  );
-}
-
-// --- END DevNodeInspector Components ---

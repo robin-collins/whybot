@@ -8,16 +8,14 @@ import React, {
 import { FlowProvider } from "./Flow";
 import {
   Edge,
-  MarkerType,
   Node,
   Position,
   OnConnectStart,
+  OnConnectStartParams,
 } from "@xyflow/react";
 import {
   ArrowDownTrayIcon,
   ArrowLeftIcon,
-  PauseIcon,
-  PlayIcon,
 } from "@heroicons/react/24/solid";
 import { closePartialJson, downloadDataAsJson } from "./util/json";
 import { SERVER_HOST } from "./constants";
@@ -27,14 +25,12 @@ import {
   QATreeNode,
   NodeDims,
   NodeType,
-  ScoredQuestion,
 } from "./types";
 import { InteractiveNodeData, InteractiveNode } from "./InteractiveNode";
 import { AddNodeModal } from "./AddNodeModal";
 import { useAppStore } from "./store/appStore";
 import { useShallow } from "zustand/react/shallow";
-import { Persona } from "./personas";
-import { Model, MODELS } from "./models";
+import { MODELS } from "./models";
 import dagre from "dagre";
 
 interface GraphPageProps {
@@ -46,16 +42,6 @@ interface GraphPageProps {
 
 // Type for the promise returned by window.openai, including the cleanup method
 type OpenAIPromise = Promise<void> & { cleanup?: () => void };
-
-type ConvertTreeToFlowProps = (
-  tree: QATree,
-  setNodeDimsStateSetter: React.Dispatch<React.SetStateAction<NodeDims>>,
-  requestDeleteBranch: (edgeId: string) => void,
-  generateAnswerForNode: (nodeId: string) => Promise<void>,
-  answeringNodes: Set<string>,
-  isGenerating: boolean,
-  currentNodeDims: NodeDims
-) => { nodes: Node<InteractiveNodeData>[]; edges: Edge[] };
 
 // --- Define layoutElements function separately ---
 const layoutElements = (
@@ -241,676 +227,480 @@ export const convertTreeToFlow = (
 
 async function getQuestions(
   nodeId: string,
-  activePromisesRef: React.MutableRefObject<Map<string, OpenAIPromise>> // Pass ref
+  activePromisesRef: React.MutableRefObject<Map<string, OpenAIPromise>>
 ): Promise<void> {
-  // console.log("function getQuestions started");
   const { qaTree: treeSnapshot, model: modelStoreKey, persona, addNode, updateNode, setError } = useAppStore.getState();
   const node = treeSnapshot?.[nodeId];
 
   if (!node) {
-    console.error(`getQuestions: Node ${nodeId} not found in store.`);
-    setError(`Node ${nodeId} disappeared before generating questions.`);
+    console.error(`Node ${nodeId} not found in tree for getQuestions`);
+    setError(`Node ${nodeId} not found.`);
     return;
   }
 
-  if (node.nodeType !== 'llm-answer') {
-    console.warn(`getQuestions: Called on non-answer node type ${node.nodeType} for node ${nodeId}. Skipping.`);
-    return;
-  }
-
-  console.log(`Refactored getQuestions: Processing node ${node.nodeID}`);
-
+  // Add null check for persona
   if (!persona) {
-    console.error("getQuestions: Missing persona in store.");
-    setError(
-      `Missing persona for question generation (node ${node.nodeID})`
-    );
+    setError("Persona not selected for generating questions.");
     return;
   }
 
-  const person = persona;
-
-  const modelInfo = MODELS[modelStoreKey];
-  const actualModelKey = modelInfo ? modelInfo.key : modelStoreKey;
-  if (!modelInfo) {
-    console.warn(`Model key "${modelStoreKey}" not found in MODELS dictionary. Sending raw key.`);
-  }
-
-  const syncChildrenWithStore = (
-    parentNodeId: string,
-    generatedQuestions: { question: string }[]
-  ) => {
-    const questionNodeId = parentNodeId.startsWith('a-') ? parentNodeId.substring(2) : null;
-    if (!questionNodeId) {
-      console.error(`syncChildrenWithStore: Could not derive question node ID from answer node ${parentNodeId}`);
-      return;
-    }
-    const latestQuestionNode = useAppStore.getState().qaTree?.[questionNodeId];
-    if (!latestQuestionNode) {
-      console.warn(
-        `syncChildrenWithStore: Question node ${questionNodeId} (derived from ${parentNodeId}) not found in store.`
-      );
-      return;
-    }
-
-    const currentChildrenIds = latestQuestionNode.children || [];
-    const existingChildren = currentChildrenIds
-      .map((id) => useAppStore.getState().qaTree?.[id])
-      .filter(Boolean) as QATreeNode[];
-
-    generatedQuestions.forEach((qData, index) => {
-      const newQuestionText = qData.question;
-      if (!newQuestionText) return;
-
-      const newId = `${questionNodeId}-q-${index}`;
-
-      const existingChildWithId = useAppStore.getState().qaTree?.[newId];
-
-      if (existingChildWithId) {
-        if (existingChildWithId.question !== newQuestionText) {
-          console.log(
-            `getQuestions: Updating existing child ${newId} question for parent ${questionNodeId}`
-          );
-          updateNode(newId, { question: newQuestionText });
-        }
-      } else {
-        console.log(
-          `getQuestions: Adding new child ${newId} for parent ${questionNodeId}`
-        );
-        const newNode: QATreeNode = {
-          nodeID: newId,
-          parent: parentNodeId,
-          question: newQuestionText,
-          answer: "",
-          nodeType: "llm-question",
-          children: [],
-        };
-        addNode(newNode);
+  const getAncestorContext = (currentId: string): string => {
+    let context = "";
+    let current = treeSnapshot?.[currentId];
+    while (current?.parent && treeSnapshot?.[current.parent]) {
+      const parent = treeSnapshot[current.parent];
+      if (parent.nodeType === "user-file" || parent.nodeType === "user-webpage") {
+        context = `\n\nContext from ${parent.nodeType} (${parent.nodeID}):\n${parent.answer}\n\n` + context;
       }
-    });
+      current = parent;
+    }
+    return context;
+  };
+  const ancestorContext = getAncestorContext(nodeId);
+
+  // Use persona.name or default for system prompt, DO NOT use persona.prompt directly
+  const systemPrompt = `You are a helpful AI assistant named ${persona.name}.`;
+
+  const requestBody = {
+    model: modelStoreKey,
+    messages: [
+      {
+        role: "system",
+        content: systemPrompt,
+      },
+      {
+        role: "user",
+        content: `${ancestorContext}Question: ${node.question}\nAnswer: ${node.answer}\n\nGenerate 3 follow-up questions based ONLY on the Answer provided above. Output only a valid JSON array of strings, like ["Question 1?", "Question 2?", "Question 3?"]`,
+      },
+    ],
+    temperature: 0.5,
+    response_format: { type: "json_object" },
   };
 
-  const streamNodeId = `qgen-${node.nodeID}`;
-  let questionsPromise: OpenAIPromise = Promise.resolve() as OpenAIPromise;
-
-  if ("getQuestions" in person && person.getQuestions) {
-    const questions = person.getQuestions(node, treeSnapshot || {});
-    console.log(
-      `getQuestions: Synchronously generated ${questions.length} questions for ${node.nodeID}`
-    );
-    syncChildrenWithStore(node.nodeID, questions);
-  } else if ("getPromptForQuestions" in person && person.getPromptForQuestions) {
-    const promptForQuestions = person.getPromptForQuestions(node, treeSnapshot || {});
-    let questionsJson = "";
-    let finalError: string | null = null;
-
-    questionsPromise = window.openai(promptForQuestions, {
-      temperature: 1,
-      model: actualModelKey,
-      nodeId: streamNodeId,
-      onChunk: (content) => {
-        try {
-          const message = JSON.stringify({ type: 'chunk', nodeId: streamNodeId, content });
-          const parsed = JSON.parse(message);
-
-          if (parsed.nodeId !== streamNodeId) return;
-
-          if (parsed.type === "chunk" && parsed.content) {
-            questionsJson += parsed.content;
-            const closedJson = closePartialJson(questionsJson);
-            try {
-              const parsedQuestions = JSON.parse(closedJson);
-              if (Array.isArray(parsedQuestions)) {
-                syncChildrenWithStore(node.nodeID, parsedQuestions);
-              }
-            } catch (e) { /* Ignore intermediate parse errors */ }
-          }
-        } catch (e: any) {
-          console.error(
-            `Error processing WebSocket message content in getQuestions (node ${node.nodeID}):`,
-            content,
-            e
-          );
-        }
+  try {
+    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
       },
-    }) as OpenAIPromise;
-
-    // Store the promise reference
-    activePromisesRef.current.set(streamNodeId, questionsPromise);
-
-    questionsPromise.catch((error: any) => {
-      console.error(
-        `Error during openai call for getQuestions (node ${node.nodeID}):`,
-        error
-      );
-      finalError = error?.message || `OpenAI call failed for node ${node.nodeID}`;
-      setError(finalError);
-      throw error;
-    }).finally(() => {
-      // Remove the promise reference on completion/failure
-      activePromisesRef.current.delete(streamNodeId);
-      if (!finalError) {
-        try {
-          const finalQuestions = JSON.parse(questionsJson);
-          if (Array.isArray(finalQuestions)) {
-            console.log(
-              `getQuestions: Final processing of ${finalQuestions.length} questions for ${node.nodeID}`
-            );
-            syncChildrenWithStore(node.nodeID, finalQuestions);
-          } else {
-            console.error(
-              `Final question JSON is not an array for node ${node.nodeID}:`,
-              questionsJson
-            );
-            setError(`Invalid format received for questions (node ${node.nodeID})`);
-          }
-        } catch (e: any) {
-          console.error(
-            `Error parsing final question JSON for node ${node.nodeID}:`,
-            e
-          );
-          setError(
-            `Failed to parse final questions JSON (node ${node.nodeID}): ${e.message}`
-          );
-        }
-      }
+      body: JSON.stringify(requestBody),
     });
-  } else {
-    console.error(`Persona ${persona?.name} is missing question generation method.`);
-    setError(`Persona ${persona?.name} cannot generate questions.`);
-    questionsPromise = Promise.reject(new Error("Persona cannot generate questions")) as OpenAIPromise;
-  }
 
-  return questionsPromise;
-  // console.log("function getQuestions finished");
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(
+        `OpenAI API error: ${response.status} ${response.statusText} - ${errorData?.error?.message}`
+      );
+    }
+
+    const result = await response.json();
+    const messageContent = result.choices[0]?.message?.content;
+
+    if (!messageContent) {
+      throw new Error("No content received from OpenAI API");
+    }
+
+    let parsedQuestions: { question: string }[] = [];
+    try {
+      const rawQuestions = JSON.parse(closePartialJson(messageContent));
+      if (Array.isArray(rawQuestions) && rawQuestions.every(q => typeof q === 'string')) {
+        parsedQuestions = rawQuestions.map((q: string) => ({ question: q }));
+      } else {
+        throw new Error("Parsed content is not an array of strings");
+      }
+    } catch (jsonError) {
+      console.error("Failed to parse OpenAI JSON response:", jsonError, "\nContent:", messageContent);
+      setError(`Failed to parse follow-up questions from AI: ${String(jsonError)}`);
+      return;
+    }
+
+    syncChildrenWithStore(nodeId, parsedQuestions);
+
+  } catch (err: any) {
+    console.error("Error fetching questions from OpenAI:", err);
+    setError(`Error generating questions: ${err.message}`);
+  }
 }
 
-function GraphPage(props: GraphPageProps) {
-  // console.log("function GraphPage started");
+// Refactored logic to sync generated questions with Zustand store
+const syncChildrenWithStore = (
+  parentNodeId: string,
+  generatedQuestions: { question: string }[]
+) => {
+  const { qaTree: currentTree, addNode } = useAppStore.getState();
+  if (!currentTree) {
+      console.error("syncChildrenWithStore: qaTree is null.");
+      return;
+  }
+  const parentNode = currentTree[parentNodeId];
+
+  if (!parentNode) {
+    console.error(`Parent node ${parentNodeId} not found for syncing children.`);
+    return;
+  }
+
+  const newChildrenIds: string[] = [];
+
+  generatedQuestions.forEach((q, index) => {
+    const childNodeId = `${parentNodeId}-q${index}`;
+    const newNode: QATreeNode = {
+      nodeID: childNodeId,
+      nodeType: "llm-question",
+      question: q.question,
+      answer: "",
+      parent: parentNodeId,
+      children: [],
+    };
+    addNode(newNode);
+    newChildrenIds.push(childNodeId);
+  });
+};
+
+const generateAnswerForNode = async (
+  nodeId: string,
+  activePromisesRef: React.MutableRefObject<Map<string, OpenAIPromise>>
+) => {
   const {
-    qaTree,
-    focusedId,
+    qaTree: treeSnapshot,
     model: modelStoreKey,
     persona,
-    isGenerating,
-    error,
-  } = useAppStore(
-    useShallow((state) => ({
-      qaTree: state.qaTree,
-      focusedId: state.focusedId,
-      model: state.model,
-      persona: state.persona,
-      isGenerating: state.isGenerating,
-      error: state.error,
-    }))
-  );
+    updateNode,
+    addNode,
+    setError,
+  } = useAppStore.getState();
 
-  const [nodeDims, setNodeDims] = useState<NodeDims>({});
-  const [isConfirmModalOpen, setIsConfirmModalOpen] = useState(false);
-  const [nodeToDelete, setNodeToDelete] = useState<string | null>(null);
-  const [isAddNodeModalOpen, setIsAddNodeModalOpen] = useState(false);
-  const [addNodeSourceId, setAddNodeSourceId] = useState<string | null>(null);
-  const [answeringNodes, setAnsweringNodes] = useState<Set<string>>(new Set());
+  const node = treeSnapshot?.[nodeId];
 
-  // State to hold the final laid-out elements
-  const [laidOutFlowElements, setLaidOutFlowElements] = useState<{ nodes: Node[], edges: Edge[] }>({ nodes: [], edges: [] });
+  if (!node || !persona || !treeSnapshot) { // Add null checks
+    setError(`Cannot generate answer: Missing node, persona, or tree state for ${nodeId}.`);
+    return;
+  }
 
-  const connectingNodeId = useRef<string | null>(null);
-  const activePromises = useRef<Map<string, OpenAIPromise>>(new Map());
+  updateNode(nodeId, { startedProcessing: true, answer: "" });
 
-  const isTreeInitialized = qaTree !== null && qaTree['q-0'] !== undefined;
-
-  useEffect(() => {
-    if (!isTreeInitialized && props.seedQuery) {
-      console.log("GraphPage: Initializing tree in Zustand store.");
-      useAppStore.getState().initializeTree(props.seedQuery);
+  const getAncestorContext = (currentId: string): string => {
+    let context = "";
+    let current = treeSnapshot?.[currentId]; // treeSnapshot is guaranteed non-null here
+    while (current?.parent && treeSnapshot?.[current.parent]) {
+      const parent = treeSnapshot[current.parent];
+      if (parent.nodeType === "user-file" || parent.nodeType === "user-webpage") {
+        context = `\n\nContext from ${parent.nodeType} (${parent.nodeID}):\n${parent.answer}\n\n` + context;
+      }
+      current = parent;
     }
-  }, [isTreeInitialized, props.seedQuery]);
+    return context;
+  };
+  const ancestorContext = getAncestorContext(nodeId);
 
-  // Auto-answer seed question if requested by prop (from StartPage action)
-  useEffect(() => {
-    if (
-      props.shouldAutoAnswerSeed &&
-      isTreeInitialized &&
-      qaTree &&
-      qaTree['q-0'] &&
-      !qaTree['q-0'].answer &&
-      !answeringNodes.has('q-0') &&
-      !isGenerating
-    ) {
-      generateAnswerForNode('q-0');
-      props.clearAutoAnswerSeed && props.clearAutoAnswerSeed();
-    }
-  }, [props.shouldAutoAnswerSeed, isTreeInitialized, qaTree, answeringNodes, isGenerating]);
-
-  // --- Cleanup Effect ---
-  useEffect(() => {
-    // Return a cleanup function
-    return () => {
-        console.log("GraphPage unmounting: Cleaning up active promises...");
-        activePromises.current.forEach((promise, nodeId) => {
-            console.log(` - Cleaning up promise for nodeId: ${nodeId}`);
-            promise.cleanup?.(); // Call the cleanup method if it exists
-        });
-        activePromises.current.clear(); // Clear the map
-    };
-  }, []); // Empty dependency array ensures this runs only on mount and unmount
-  // --- End Cleanup Effect ---
-
-  const generateAnswerForNode = useCallback(
-    async (nodeId: string) => {
-      setAnsweringNodes((prev) => new Set(prev).add(nodeId));
-      useAppStore.getState().setIsGenerating(true);
-      useAppStore.getState().setError(null);
-      let questionGenerationPromise: OpenAIPromise = Promise.resolve() as OpenAIPromise;
-      let answerGenerationPromise: OpenAIPromise | null = null; // Define variable for answer promise
-
-      const {
-        model: modelStoreKey,
-        persona,
-        qaTree: currentTree,
-        addNode,
-        updateNode,
-        updateNodeAnswerChunk,
-      } = useAppStore.getState();
-
-      if (!currentTree) {
-        console.error("generateAnswerForNode: qaTree is null!");
-        useAppStore.getState().setError("Cannot generate answer: graph not initialized.");
-        setAnsweringNodes((prev) => { const next = new Set(prev); next.delete(nodeId); return next; });
-        useAppStore.getState().setIsGenerating(false);
-        return;
-      }
-
-      const questionNode = currentTree[nodeId];
-      if (!questionNode || (questionNode.nodeType !== 'llm-question' && questionNode.nodeType !== 'user-question')) {
-        console.warn(`generateAnswerForNode: Invalid or non-question node ID provided: ${nodeId}`);
-        useAppStore.getState().setError(`Cannot generate answer for node type: ${questionNode?.nodeType}`);
-        setAnsweringNodes((prev) => { const next = new Set(prev); next.delete(nodeId); return next; });
-        useAppStore.getState().setIsGenerating(false);
-        return;
-      }
-
-      if (!persona) {
-        console.error("generateAnswerForNode: No persona selected");
-        useAppStore.getState().setError("No persona selected. Please choose one.");
-        setAnsweringNodes((prev) => { const next = new Set(prev); next.delete(nodeId); return next; });
-        useAppStore.getState().setIsGenerating(false);
-        return;
-      }
-
-      const answerNodeId = `a-${nodeId}`;
-      console.log(`generateAnswerForNode: Checking/Creating answer node ${answerNodeId}`);
-      if (!currentTree[answerNodeId]) {
-        const answerNode: QATreeNode = {
-          nodeID: answerNodeId,
-          question: "",
-          answer: "",
-          nodeType: "llm-answer",
-          parent: nodeId,
-          children: [],
-          isLoading: true,
-          errorMessage: undefined,
-        };
-        console.log(`generateAnswerForNode: Creating placeholder answer node ${answerNodeId} via addNode`);
-        addNode(answerNode);
-      } else {
-        console.log(`generateAnswerForNode: Resetting existing answer node ${answerNodeId}`);
-        updateNode(answerNodeId, { isLoading: true, errorMessage: undefined, answer: "" });
-      }
-
-      console.log(
-        `generateAnswerForNode: Proceeding to fetch answer for ${nodeId} using model ${modelStoreKey}`
-      );
-
-      const modelInfo = MODELS[modelStoreKey];
-      const actualModelKey = modelInfo ? modelInfo.key : modelStoreKey;
-      if (!modelInfo) {
-        console.warn(`Model key "${modelStoreKey}" not found in MODELS dictionary. Sending raw key.`);
-      }
-
-      const contextNodes: QATreeNode[] = [];
-      let currentAncestorId = questionNode.parent;
-      while (currentAncestorId && currentTree[currentAncestorId]) {
-        const ancestor = currentTree[currentAncestorId];
-        if (
-          ancestor.nodeType === "user-file" ||
-          ancestor.nodeType === "user-webpage"
-        ) {
-          contextNodes.unshift(ancestor);
-        }
-        currentAncestorId = ancestor.parent;
-      }
-      const context = contextNodes
-        .map((n) => {
-          if (n.nodeType === "user-file")
-            return `Context from file ${n.fileInfo?.name || "untitled"}:\n${
-              n.answer
-            }`;
-          if (n.nodeType === "user-webpage")
-            return `Context from webpage ${n.url || "unknown"}:\n${n.answer}`;
-          return "";
-        })
-        .join("\n\n---\n\n");
-
-      let prompt = "";
+  let prompt = "";
+  if (typeof persona.getPromptForAnswer === 'function') {
       try {
-        prompt = persona.getPromptForAnswer(questionNode, currentTree);
-        if (context) {
-          prompt = `Background Context:\n${context}\n\n---\n\n${prompt}`;
+        // Pass treeSnapshot which is confirmed non-null
+        prompt = persona.getPromptForAnswer(node, treeSnapshot);
+        if (ancestorContext) {
+            prompt = `Background Context:\n${ancestorContext}\n\n---\n\n${prompt}`;
         }
       } catch (e: any) {
         console.error(`Error getting prompt from persona ${persona.name} for node ${nodeId}:`, e);
-        useAppStore.getState().setError(`Error getting prompt: ${e.message}`);
-        updateNode(answerNodeId, { isLoading: false, errorMessage: `Persona prompt error: ${e.message}` });
-        setAnsweringNodes((prev) => { const next = new Set(prev); next.delete(nodeId); return next; });
-        useAppStore.getState().setIsGenerating(false);
+        setError(`Error getting prompt: ${e.message}`);
+        updateNode(`a-${nodeId}`, { errorMessage: `Persona prompt error: ${e.message}` });
+        updateNode(nodeId, { startedProcessing: false });
         return;
       }
+  } else {
+      // Fallback if getPromptForAnswer doesn't exist
+      console.warn("Using fallback prompt generation as getPromptForAnswer not found on persona.");
+      prompt = `Answer the following question, considering the preceding context if any.\n\n${ancestorContext}Question: ${node.question}\nAnswer:`;
+  }
 
-      try {
-        // Assign the promise for answer generation
-        answerGenerationPromise = window.openai(prompt, {
-          temperature: 1,
-          model: actualModelKey,
-          nodeId: answerNodeId,
-          onChunk: (content) => {
-            try {
-              const message = JSON.stringify({ type: 'chunk', nodeId: answerNodeId, content });
-              const parsedMessage = JSON.parse(message);
+  const answerNodeId = `a-${nodeId}`;
 
-              if (parsedMessage.nodeId !== answerNodeId) return;
+  // Create the answer node structure BEFORE starting the stream
+  const answerNode: QATreeNode = {
+    nodeID: answerNodeId,
+    nodeType: "llm-answer",
+    question: "Answer",
+    answer: "",
+    parent: nodeId,
+    children: [],
+    startedProcessing: false,
+  };
+  addNode(answerNode); // Add the initial answer node to the store
 
-              if (parsedMessage.type === "chunk" && parsedMessage.content) {
-                useAppStore.getState().updateNodeAnswerChunk(answerNodeId, parsedMessage.content);
-              }
-            } catch (e) {
-              console.error(
-                `generateAnswerForNode: Error processing stream chunk for ${answerNodeId}:`,
-                content,
-                e
-              );
-            }
-          }
-        }) as OpenAIPromise;
+  let accumulatedAnswer = "";
 
-        // Store the answer promise reference
-        activePromises.current.set(answerNodeId, answerGenerationPromise);
-
-        // Await the answer generation
-        await answerGenerationPromise;
-
-        // Answer succeeded, remove its promise ref
-        activePromises.current.delete(answerNodeId);
-
-        console.log(`generateAnswerForNode: Answer stream done for ${answerNodeId}. Triggering questions.`);
-        useAppStore.getState().updateNode(answerNodeId, { isLoading: false });
-
-        const nodeExists = useAppStore.getState().qaTree?.[answerNodeId];
-        if (nodeExists) {
-            // Pass the ref to getQuestions
-            questionGenerationPromise = getQuestions(answerNodeId, activePromises);
-            await questionGenerationPromise; // Wait for questions (promise already stored/deleted inside getQuestions)
-            console.log(`generateAnswerForNode: Question generation finished (or failed) for ${answerNodeId}.`);
-        } else {
-            console.error(`Node ${answerNodeId} not found in store after answer completion.`);
-            useAppStore.getState().setError(`Node ${answerNodeId} disappeared unexpectedly after generation.`);
+  try {
+    const promise = window.openai(prompt, {
+      model: modelStoreKey,
+      temperature: 0.7,
+      nodeId: nodeId,
+      onChunk: (chunk) => {
+        if (typeof chunk === 'string') {
+          accumulatedAnswer += chunk;
+          updateNode(answerNodeId, { answer: accumulatedAnswer });
         }
+      },
+    });
 
-      } catch (error: any) {
-        console.error(`Error during generation process for question node ${nodeId}:`, error);
-        useAppStore.getState().setError(`Generation failed: ${error.message}`);
-        const currentAnswerNode = useAppStore.getState().qaTree?.[answerNodeId];
-        if (currentAnswerNode) {
-            useAppStore.getState().updateNode(answerNodeId, { isLoading: false, errorMessage: error.message });
-        }
-        // Ensure promise refs are cleaned up on error too
-        if (answerNodeId && activePromises.current.has(answerNodeId)) {
-            activePromises.current.delete(answerNodeId);
-        }
-      } finally {
-        setAnsweringNodes((prev) => {
-          const next = new Set(prev);
-          next.delete(nodeId);
-          return next;
-        });
-        useAppStore.getState().setIsGenerating(false);
-        console.log(`generateAnswerForNode: FINISHED generation process for question node ${nodeId}`);
+    activePromisesRef.current.set(nodeId, promise);
+    await promise;
+    await getQuestions(answerNodeId, activePromisesRef);
+
+  } catch (err: any) {
+    console.error("Error streaming answer from OpenAI:", err);
+    setError(`Error generating answer: ${err.message}`);
+    updateNode(answerNodeId, {
+      answer: `Error generating answer: ${err.message}`,
+      nodeType: "llm-answer",
+    });
+  } finally {
+    updateNode(nodeId, { startedProcessing: false });
+    if (activePromisesRef.current.has(nodeId)) {
+        activePromisesRef.current.delete(nodeId);
+    }
+    await new Promise(resolve => setTimeout(resolve, 50));
+  }
+};
+
+function GraphPage(props: GraphPageProps) {
+  const { seedQuery, onExit, shouldAutoAnswerSeed, clearAutoAnswerSeed } = props;
+  const {
+    qaTree,
+    addNode,
+    updateNode,
+    setModel,
+    setPersona,
+    setFocusedId: setZustandFocusedId,
+    setError,
+  } = useAppStore(
+    useShallow((state) => ({
+      qaTree: state.qaTree,
+      addNode: state.addNode,
+      updateNode: state.updateNode,
+      setModel: state.setModel,
+      setPersona: state.setPersona,
+      setFocusedId: state.setFocusedId,
+      setError: state.setError,
+    }))
+  );
+  const [nodeDims, setNodeDims] = useState<NodeDims>({});
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [nodeToDelete, setNodeToDelete] = useState<string | null>(null);
+  const [showAddNodeModal, setShowAddNodeModal] = useState(false);
+  const [addNodePosition, setAddNodePosition] = useState<{ x: number; y: number } | null>(null);
+  const [connectingNodeId, setConnectingNodeId] = useState<string | null>(null);
+  const [answeringNodes, setAnsweringNodes] = useState<Set<string>>(new Set());
+  const activePromises = useRef<Map<string, OpenAIPromise>>(new Map());
+
+  // Initialize tree with seed query
+  useEffect(() => {
+    const initialNodeId = "0";
+    // Add explicit null check for qaTree
+    if (qaTree && !qaTree[initialNodeId]) {
+      const seedNode: QATreeNode = {
+        nodeID: initialNodeId,
+        nodeType: "user-question",
+        question: seedQuery,
+        answer: "",
+        children: [],
+      };
+      addNode(seedNode);
+      if (shouldAutoAnswerSeed) {
+        setTimeout(() => {
+          void generateAnswerForNode(initialNodeId, activePromises);
+          clearAutoAnswerSeed?.();
+        }, 100);
       }
-    },
-    []
-  );
+    }
+  }, [seedQuery, addNode, qaTree, shouldAutoAnswerSeed, clearAutoAnswerSeed]);
 
-  const onConnectStart = useCallback<OnConnectStart>(
-    (event, { nodeId }) => {
-      connectingNodeId.current = nodeId;
-    },
-    []
-  );
+  // Cleanup active promises on unmount
+  useEffect(() => {
+    const currentActivePromises = activePromises.current;
+    return () => {
+      console.log("GraphPage unmounting, cleaning up active promises...");
+      currentActivePromises.forEach((promise) => {
+        promise.cleanup?.();
+      });
+      currentActivePromises.clear();
+    };
+  }, []);
 
   const requestDeleteBranch = useCallback((targetNodeId: string) => {
-    console.log("Requesting confirmation to delete branch starting at node:", targetNodeId);
     setNodeToDelete(targetNodeId);
-    setIsConfirmModalOpen(true);
+    setShowDeleteModal(true);
   }, []);
 
-  const handleConfirmDelete = useCallback(() => {
-    if (!nodeToDelete) return;
-    const targetNodeId = nodeToDelete;
-    console.log("Confirmed deletion for branch starting at node:", targetNodeId);
-
-    if (!useAppStore.getState().qaTree?.[targetNodeId]) {
-        console.error(`Node to delete (${targetNodeId}) not found in current tree state.`);
-        useAppStore.getState().setError(`Node to delete (${targetNodeId}) was not found.`);
-        setIsConfirmModalOpen(false);
-        setNodeToDelete(null);
-        return;
+  const confirmDeleteBranch = useCallback(() => {
+    if (nodeToDelete) {
+      // deleteNodes(nodeToDelete); // Still commented out
+      console.warn("Delete functionality commented out as deleteNodes action is missing from Zustand store.");
+      setError("Delete functionality is currently disabled.");
     }
-
-    console.log(
-      `Calling deleteNodeAndDescendants action for root: ${targetNodeId}`
-    );
-    useAppStore.getState().deleteNodeAndDescendants(targetNodeId);
-
-    setIsConfirmModalOpen(false);
+    setShowDeleteModal(false);
     setNodeToDelete(null);
-  }, [nodeToDelete]);
+  }, [nodeToDelete, setError]);
 
-  const onConnectEnd = useCallback((event: MouseEvent | TouchEvent) => {
-    // const target = event.target as Element;
-    // const targetIsPane = target.classList.contains("react-flow__pane");
-    // const sourceNodeId = connectingNodeId.current;
-    // const currentTree = useAppStore.getState().qaTree;
-
-    // if (targetIsPane && sourceNodeId && currentTree) {
-    //   const sourceNode = currentTree[sourceNodeId];
-    //   const isValidSource = sourceNode && (
-    //     sourceNode.nodeType === "llm-answer" ||
-    //     sourceNode.nodeType === "user-file" ||
-    //     sourceNode.nodeType === "user-webpage"
-    //   );
-
-    //   if (isValidSource) {
-    //     console.log(`Connection ended on pane from valid source: ${sourceNodeId}`);
-    //     setAddNodeSourceId(sourceNodeId);
-    //     setIsAddNodeModalOpen(true);
-    //   } else {
-    //     console.log(
-    //       `Connection end from invalid source node type/state: ${sourceNodeId} (Type: ${sourceNode?.nodeType})`
-    //     );
-    //   }
-    // } else {
-    //   console.log(`Connection ended. Target is pane: ${targetIsPane}, Source Node ID: ${sourceNodeId}`);
-    // }
-    // connectingNodeId.current = null;
+  const cancelDelete = useCallback(() => {
+    setShowDeleteModal(false);
+    setNodeToDelete(null);
   }, []);
 
-  // --- Memoize Raw Nodes/Edges (Pass nodeDims to converter) ---
-  const memoizedNodesAndEdges = useMemo(() => {
-    if (!qaTree) {
-      return { nodes: [], edges: [] };
-    }
-    const result = convertTreeToFlow(
+  const { nodes: flowNodes, edges: flowEdges } = useMemo(() => {
+    if (!qaTree) return { nodes: [], edges: [] };
+    const { nodes, edges } = convertTreeToFlow(
       qaTree,
       setNodeDims,
       requestDeleteBranch,
-      generateAnswerForNode,
+      (id) => generateAnswerForNode(id, activePromises),
       answeringNodes,
-      isGenerating,
+      false,
       nodeDims
     );
-    return result;
-  }, [qaTree, requestDeleteBranch, generateAnswerForNode, answeringNodes, isGenerating, nodeDims]);
-  // --- End Memoize Raw Nodes/Edges (logs removed) ---
+    return layoutElements(nodes, edges, nodeDims);
+  }, [qaTree, nodeDims, requestDeleteBranch, answeringNodes]);
 
-  // --- Debounced Layout recalculation (100ms) ---
-  useEffect(() => {
-    if (memoizedNodesAndEdges.nodes.length === 0) {
-      setLaidOutFlowElements({ nodes: [], edges: [] });
-      return;
-    }
-    const handler = setTimeout(() => {
-      const result = layoutElements(
-        memoizedNodesAndEdges.nodes,
-        memoizedNodesAndEdges.edges,
-        nodeDims
-      );
-      setLaidOutFlowElements(result);
-    }, 100);
-    return () => clearTimeout(handler);
-  }, [memoizedNodesAndEdges, nodeDims]);
-  // --- End Debounced Layout recalculation ---
+  const handleNodeClick = useCallback(
+    (event: React.MouseEvent, node: Node) => {
+      setZustandFocusedId(node.id);
+    },
+    [setZustandFocusedId]
+  );
+
+  const openAddNodeModal = (position: { x: number; y: number }) => {
+    setAddNodePosition(position);
+    setShowAddNodeModal(true);
+  };
 
   const handleAddNodeFromModal = (type: NodeType) => {
-    if (addNodeSourceId) {
-      let prefix = "u";
-      if (type === "user-question") prefix = "uq";
-      else if (type === "user-file") prefix = "uf";
-      else if (type === "user-webpage") prefix = "uw";
+    if (!addNodePosition || !connectingNodeId || !qaTree) {
+         console.error("Cannot add node: Missing position, connecting node ID, or tree state.");
+         return;
+    }
+    if (!connectingNodeId) {
+        console.error("Cannot add node: connectingNodeId is null unexpectedly.");
+        return;
+    }
+    const parentNode = qaTree[connectingNodeId];
+    if (!parentNode) {
+      console.error("Parent node not found for adding new node");
+      return;
+    }
 
-      const newIdSuffix = Math.random().toString(36).substring(2, 9);
-      const cleanSourceId = addNodeSourceId.replace(/[^a-zA-Z0-9_-]/g, '').substring(0, 20);
-      const newNodeId = `${prefix}-${cleanSourceId}-${newIdSuffix}`;
+    const newNodeId = `${parentNode.nodeID}-${type.substring(0,2)}-${Date.now()}`;
+    let newNodeData: Partial<QATreeNode> = {};
+    let userInput: string | null = null; // Use specific var for prompt result
 
+    switch (type) {
+      case 'user-question':
+        userInput = prompt("Enter your question:", "New Question");
+        // Check if prompt returned non-null and non-empty string
+        if (userInput !== null && userInput.trim() !== "") {
+          newNodeData = { question: userInput, answer: "" };
+        }
+        break;
+      case 'user-file':
+        alert("File upload node not implemented yet.");
+        break;
+      case 'user-webpage':
+        userInput = prompt("Enter URL:", "https://");
+        // Check if prompt returned non-null and non-empty string
+        if (userInput !== null && userInput.trim() !== "") {
+          newNodeData = { url: userInput, question: `Content from ${userInput}`, answer: "Loading..." };
+        }
+        break;
+      default:
+        console.warn("Unsupported node type for manual add:", type);
+        return;
+    }
+
+    if (!connectingNodeId) { // Re-check just before creating node
+        console.error("Cannot create node: connectingNodeId became null unexpectedly.");
+        return;
+    }
+
+    if (Object.keys(newNodeData).length > 0) {
       const newNode: QATreeNode = {
         nodeID: newNodeId,
         nodeType: type,
-        question: "",
-        answer: "",
-        parent: addNodeSourceId,
+        parent: connectingNodeId, // Now guaranteed non-null by check above
         children: [],
-        isLoading: false,
-      };
-      useAppStore.getState().addNode(newNode);
-      console.log(`Added new node ${newNodeId} from modal, parent: ${addNodeSourceId}`);
-    } else {
-      console.warn("handleAddNodeFromModal called without addNodeSourceId");
+        ...newNodeData,
+      } as QATreeNode;
+      addNode(newNode);
     }
-    setIsAddNodeModalOpen(false);
-    setAddNodeSourceId(null);
+
+    setShowAddNodeModal(false);
+    setAddNodePosition(null);
+    setConnectingNodeId(null);
   };
 
-  if (!isTreeInitialized) {
-    console.log("GraphPage: Rendering Loading state because tree is not initialized.");
-    return <div>Loading...</div>;
-  }
+  const onConnectStart = useCallback((_: React.MouseEvent | React.TouchEvent, { nodeId }: OnConnectStartParams) => {
+      setConnectingNodeId(nodeId);
+  }, []);
 
-  const currentModelInfo = modelStoreKey ? MODELS[modelStoreKey] : null;
-  const currentPersonaInfo = persona;
+  const onConnectEnd = useCallback(
+    (event: MouseEvent | TouchEvent) => {
+      const targetIsPane = event.target instanceof Element && event.target.classList.contains("react-flow__pane");
+      if (targetIsPane && connectingNodeId) {
+        const position = addNodePosition ?? { x: (event as MouseEvent).clientX, y: (event as MouseEvent).clientY };
+        openAddNodeModal(position);
+      } else {
+        setConnectingNodeId(null);
+        setAddNodePosition(null);
+      }
+    },
+    [connectingNodeId, addNodePosition]
+  );
 
   return (
-    <div className="text-sm h-screen w-screen relative overflow-hidden">
-      {error && (
-        <div className="fixed top-0 left-1/2 transform -translate-x-1/2 mt-2 z-50 bg-red-100 border border-red-400 text-red-700 px-4 py-2 rounded shadow-md max-w-md text-center">
-          <strong>Error:</strong> {error}
-          <button
-            onClick={() => useAppStore.getState().setError(null)}
-            className="ml-4 text-red-500 hover:text-red-700 font-bold"
-          >
-            X
+    <div className="flex h-screen flex-col relative">
+      {/* Header Bar */}
+      <div className="bg-gray-800 text-white p-2 flex items-center justify-between z-20">
+        <button onClick={onExit} className="p-1 hover:bg-gray-700 rounded">
+          <ArrowLeftIcon className="h-5 w-5" />
+        </button>
+        <h1 className="text-lg font-semibold">WhyBot Graph</h1>
+        <div>
+          <button onClick={() => downloadDataAsJson(qaTree, 'whybot-graph.json')} className="p-1 hover:bg-gray-700 rounded" title="Download Graph Data (JSON)">
+            <ArrowDownTrayIcon className="h-5 w-5" />
           </button>
         </div>
-      )}
-
-      <FlowProvider
-        flowNodes={laidOutFlowElements.nodes}
-        flowEdges={laidOutFlowElements.edges}
-        nodeDims={nodeDims}
-        onConnectStart={onConnectStart}
-        onConnectEnd={onConnectEnd}
-        deleteBranch={requestDeleteBranch}
-      />
-
-      <AddNodeModal
-        isOpen={isAddNodeModalOpen}
-        onClose={() => {
-          setIsAddNodeModalOpen(false);
-          setAddNodeSourceId(null);
-        }}
-        onAddNode={handleAddNodeFromModal}
-        sourceNodeId={addNodeSourceId}
-      />
-
-      <div className="fixed right-4 bottom-4 flex items-center space-x-2 z-20">
-        {SERVER_HOST.includes("localhost") && (
-          <div
-            className="bg-black/40 p-2 flex items-center justify-center rounded cursor-pointer hover:text-green-400 backdrop-blur"
-            onClick={() => {
-              const currentTree = useAppStore.getState().qaTree;
-              if (!currentTree) return;
-              const filename = (props.seedQuery || "graph-export")
-                .toLowerCase()
-                .replace(/[^a-z0-9]+/g, "-")
-                .substring(0, 50);
-              const dict: any = {
-                version: "1.0.0",
-                persona: useAppStore.getState().persona?.name,
-                model: useAppStore.getState().model,
-                seedQuery: props.seedQuery,
-                tree: currentTree,
-              };
-              downloadDataAsJson(dict, filename);
-            }}
-            title="Download Graph Data (JSON)"
-          >
-            <ArrowDownTrayIcon className="w-5 h-5" />
-          </div>
-        )}
-        <div className="bg-black/40 p-2 pl-3 rounded flex items-center space-x-3 backdrop-blur touch-none">
-          <div className="text-white/60 select-none">
-            {currentPersonaInfo?.name ?? "Default Persona"} •{" "}
-            {currentModelInfo?.name ?? "Default Model"}
-          </div>
-          {isGenerating && (
-            <div title="Generating..." className="flex items-center justify-center text-green-400">
-              <svg className="animate-spin h-5 w-5 mr-1" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-              </svg>
-              <span>Generating...</span>
-            </div>
-          )}
-        </div>
       </div>
-      <div
-        onClick={props.onExit}
-        className="fixed top-4 left-4 bg-black/40 rounded p-2 cursor-pointer hover:bg-black/60 backdrop-blur touch-none z-20"
-        title="Exit to Start Page"
-      >
-        <ArrowLeftIcon className="w-5 h-5" />
+
+      {/* Global Error Display - Commented out */}
+
+      <div className="flex-grow relative">
+        <FlowProvider
+          flowNodes={flowNodes}
+          flowEdges={flowEdges}
+          nodeDims={nodeDims}
+          deleteBranch={requestDeleteBranch}
+          onConnectStart={onConnectStart as any} // Keep cast
+          onConnectEnd={onConnectEnd as any}     // Keep cast
+        />
       </div>
 
       <ConfirmDeleteModal
-        isOpen={isConfirmModalOpen}
-        onClose={() => {
-          setIsConfirmModalOpen(false);
-          setNodeToDelete(null);
-        }}
-        onConfirm={handleConfirmDelete}
+        isOpen={showDeleteModal}
+        onClose={cancelDelete}
+        onConfirm={confirmDeleteBranch}
+        // Removed nodeId prop
       />
+      <AddNodeModal
+        isOpen={showAddNodeModal}
+        onClose={() => {
+            setShowAddNodeModal(false);
+            setAddNodePosition(null);
+            setConnectingNodeId(null);
+        }}
+        onAddNode={handleAddNodeFromModal}
+        // Add required sourceNodeId prop
+        sourceNodeId={connectingNodeId ?? ""} // Pass connectingNodeId, fallback to empty string
+      />
+
     </div>
   );
-  // console.log("function GraphPage finished");
 }
 
 export default GraphPage;

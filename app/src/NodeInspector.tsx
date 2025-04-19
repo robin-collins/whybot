@@ -31,7 +31,7 @@ export default function NodeInspector() {
           // Nothing to show if not yet measured
           if (width <= 0 || height <= 0) return null;
 
-          const { x, y } = node.position as XYPosition;
+          const { x, y } = node.position;
 
           return (
             <div

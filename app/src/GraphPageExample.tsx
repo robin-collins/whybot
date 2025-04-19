@@ -114,7 +114,7 @@ export const streamExample = async (
     let nextLayer: string[] = [];
     for (const id of layer) {
       if (id in exampleTree && exampleTree[id].children != null) {
-        const children: string[] = exampleTree[id].children!;
+        const children: string[] = exampleTree[id].children;
         nextLayer = [...nextLayer, ...children];
       }
     }

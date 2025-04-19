@@ -60,7 +60,7 @@ export function DeletableEdge({
         id={id}
         path={edgePath}
         markerEnd={markerEnd}
-        style={style as React.CSSProperties}
+        style={style}
       />
 
       <path

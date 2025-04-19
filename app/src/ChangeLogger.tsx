@@ -1,6 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { useStore, type NodeChange } from '@xyflow/react';
 
+// Define interface for the logged change structure
+interface LoggedChange {
+  id: string;
+  type: NodeChange['type']; // Use the type from NodeChange union
+  change: NodeChange; // Store the original change object
+}
+
 // Selectors to get node changes and dimensions
 const nodeChangesSelector = (state) => state.nodeChanges;
 const nodeInternalsSelector = (state) => state.nodeInternals;
@@ -16,19 +23,24 @@ function formatNodeDimensions(node) {
 function ChangeLogger() {
   const nodeChanges = useStore(nodeChangesSelector);
   const nodeInternals = useStore(nodeInternalsSelector);
-  const [loggedChanges, setLoggedChanges] = useState([]);
+  // Use the new LoggedChange interface for the state type
+  const [loggedChanges, setLoggedChanges] = useState<LoggedChange[]>([]);
 
   useEffect(() => {
     if (nodeChanges?.length) {
-      // Log only the most recent batch of changes for simplicity
-      setLoggedChanges(prev => [
-        ...prev,
-        ...nodeChanges.map(change => ({
-          id: change.id,
-          type: change.type,
-          change: change, // Store the whole change object if needed
-        }))
-      ].slice(-10)); // Keep only the last N changes
+      // Map nodeChanges to the LoggedChange structure
+      const newChanges: LoggedChange[] = nodeChanges.map((change: NodeChange) => ({
+        // Use type assertion for id as it exists on most change types
+        id: (change as any).id,
+        type: change.type,
+        change: change,
+      }));
+
+      // Ensure we only update with valid changes containing an ID
+      setLoggedChanges(prev =>
+        [...prev, ...newChanges.filter(c => c.id)] // Filter out changes without an id if necessary
+        .slice(-10) // Keep only the last N changes
+      );
     }
   }, [nodeChanges]);
 
