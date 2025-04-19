@@ -64,7 +64,7 @@ const layoutElements = (
   nodeDims: NodeDims,
   direction = "LR"
 ) => {
-  console.log("function layoutElements started");
+  // Removed debug logging
   const isHorizontal = direction === "LR";
   const dagreGraph = new dagre.graphlib.Graph();
   dagreGraph.setDefaultEdgeLabel(() => ({}));
@@ -79,24 +79,17 @@ const layoutElements = (
   }
 
   nodes.forEach((node) => {
-    // Re-enable dynamic dims, using v12's node.measured
-    // Prioritize dimensions from our nodeDims state if available
     const nodeSpecificDims = nodeDims[node.id];
-    const width = nodeSpecificDims?.width ?? node.measured?.width ?? defaultNodeWidth;
-    const height = nodeSpecificDims?.height ?? node.measured?.height ?? defaultNodeHeight;
+    const width = nodeSpecificDims?.width ?? defaultNodeWidth;
+    const height = nodeSpecificDims?.height ?? defaultNodeHeight;
 
-    // --- DEBUG LOGGING for parent node dimensions when children might be added ---
-    if (node.id.startsWith('a-')) { // Check if it's an answer node
-        const childNodesExist = nodes.some(n => n.data?.parent === node.id);
-        if (childNodesExist) {
-             console.log(`Layout: Using dimensions for potentially expanded parent ${node.id}: W=${width}, H=${height} (Source: ${nodeSpecificDims ? 'nodeDims' : node.measured ? 'measured' : 'default'})`);
-        }
-    }
-    // --- END DEBUG LOGGING ---
+    // Removed debug log for missing dimensions
+
+    // Removed debug log for expanded parent dimensions
 
     dagreGraph.setNode(node.id, {
-        width: width, // Use calculated width
-        height: height, // Use calculated height
+        width: width,
+        height: height,
     });
   });
 
@@ -122,11 +115,7 @@ const layoutElements = (
   const laidOutNodes = nodes.map((node) => {
     const nodeWithPosition = dagreGraph.node(node.id);
 
-    // --- DEBUG LOGGING START ---
-    if (node.id === 'q-0' || node.id === 'a-q-0') {
-      console.log(`Dagre calculated position for ${node.id}:`, nodeWithPosition);
-    }
-    // --- DEBUG LOGGING END ---
+    // Removed specific node position debug log
 
     if (nodeWithPosition) {
       return {
@@ -146,9 +135,12 @@ const layoutElements = (
   });
 
   return { nodes: laidOutNodes, edges };
-  console.log("function layoutElements finished");
+  // console.log("function layoutElements finished");
 };
 // --- End layoutElements ---
+
+const DEFAULT_NODE_WIDTH = 250;
+const DEFAULT_NODE_HEIGHT = 170;
 
 // --- Modify convertTreeToFlow to NOT call layout ---
 export const convertTreeToFlow = (
@@ -160,17 +152,15 @@ export const convertTreeToFlow = (
   isGenerating: boolean,
   currentNodeDims: NodeDims
 ): { nodes: Node[]; edges: Edge[] } => {
-  console.log("function convertTreeToFlow started");
+  // Removed debug log
   const nodes: Node<InteractiveNodeData>[] = [];
   const edges: Edge[] = [];
-  console.log(
-    `convertTreeToFlow: Processing tree with ${Object.keys(tree).length} nodes.`
-  );
 
   // Pass 1: Create nodes for non-answer types
   Object.values(tree).forEach((nodeData) => {
     if (!nodeData || !nodeData.nodeID) return;
     if (nodeData.nodeType !== 'llm-answer') {
+      const dims = currentNodeDims[nodeData.nodeID] ?? { width: DEFAULT_NODE_WIDTH, height: DEFAULT_NODE_HEIGHT };
       nodes.push({
         id: nodeData.nodeID,
         type: 'interactiveNode',
@@ -188,6 +178,8 @@ export const convertTreeToFlow = (
             answeringNodes.has(nodeData.nodeID),
         },
         position: { x: 0, y: 0 }, // Default position, layout happens later
+        width: dims.width,
+        height: dims.height,
       });
     }
   });
@@ -195,73 +187,55 @@ export const convertTreeToFlow = (
   // Pass 2: Create nodes for answer types
   Object.values(tree).forEach((nodeData) => {
     if (!nodeData || nodeData.nodeType !== 'llm-answer' || !nodeData.nodeID) return;
-    if (nodes.some(n => n.id === nodeData.nodeID)) return;
+    if (nodes.some((n) => n.id === nodeData.nodeID)) return;
+    const dims = currentNodeDims[nodeData.nodeID] ?? { width: DEFAULT_NODE_WIDTH, height: DEFAULT_NODE_HEIGHT };
     nodes.push({
-        id: nodeData.nodeID,
-        type: 'interactiveNode',
-        data: {
-            ...nodeData,
-            nodeID: nodeData.nodeID,
-            setNodeDims: setNodeDimsStateSetter,
-            currentDims: currentNodeDims[nodeData.nodeID] ?? { width: 0, height: 0 },
-            onGenerateAnswer: undefined,
-            isAnswering: false,
-        },
-        position: { x: 0, y: 0 }, // Default position
+      id: nodeData.nodeID,
+      type: 'interactiveNode',
+      data: {
+        ...nodeData,
+        nodeID: nodeData.nodeID,
+        setNodeDims: setNodeDimsStateSetter,
+        currentDims: currentNodeDims[nodeData.nodeID] ?? { width: 0, height: 0 },
+        onGenerateAnswer: undefined,
+        isAnswering: false,
+      },
+      position: { x: 0, y: 0 }, // Default position
+      width: dims.width,
+      height: dims.height,
     });
   });
 
-  // Pass 3: Create Edges
+  // Pass 3: Create edges from parent/child relationships
   Object.values(tree).forEach((nodeData) => {
-      if (!nodeData || !nodeData.nodeID) return;
-
-      const parentId = nodeData.parent;
-      const targetId = nodeData.nodeID;
-
-      if (parentId && tree[parentId]) {
-          const parentNodeData = tree[parentId];
-          let sourceId = parentId;
-          if ((parentNodeData.nodeType === "llm-question" || parentNodeData.nodeType === "user-question") && tree[`a-${parentId}`]) {
-             sourceId = `a-${parentId}`;
-          }
-          if (nodes.some((n) => n.id === sourceId) && nodes.some((n) => n.id === targetId)) {
-             edges.push({
-                id: `${sourceId}-${targetId}`,
-                type: "bezier",
-                source: sourceId,
-                target: targetId,
-                data: { requestDeleteBranch, targetNodeId: targetId },
-                animated: isGenerating,
-                markerEnd: { type: MarkerType.Arrow }
-             });
-          }
-      }
-
-      if ((nodeData.nodeType === "llm-question" || nodeData.nodeType === "user-question")) {
-          const questionNodeId = nodeData.nodeID;
-          const answerNodeId = `a-${questionNodeId}`;
-          if (tree[answerNodeId]) {
-              if (nodes.some((n) => n.id === questionNodeId) && nodes.some((n) => n.id === answerNodeId)) {
-                  edges.push({
-                    id: `${questionNodeId}-${answerNodeId}`,
-                    type: "bezier",
-                    source: questionNodeId,
-                    target: answerNodeId,
-                    animated: isGenerating,
-                    markerEnd: { type: MarkerType.Arrow },
-                    data: { requestDeleteBranch, targetNodeId: answerNodeId }
-                  });
-              }
-          }
-      }
+    if (nodeData && nodeData.nodeID && nodeData.children) {
+      nodeData.children.forEach((childId) => {
+        // Check if both source and target nodes exist before creating edge
+        if (tree[nodeData.nodeID] && tree[childId]) {
+          const edgeId = `e-${nodeData.nodeID}-${childId}`;
+          // Add the edge type explicitly
+          edges.push({
+            id: edgeId,
+            source: nodeData.nodeID,
+            target: childId,
+            type: 'deleteEdge',
+            data: {
+              // Pass necessary data for the custom edge here
+              requestDeleteBranch: requestDeleteBranch,
+              targetNodeId: childId, // Pass target ID for deletion logic
+            },
+          });
+        } else {
+          console.warn(
+            `convertTreeToFlow: Skipping edge creation for missing node. Source: ${nodeData.nodeID}, Child: ${childId}`
+          );
+        }
+      });
+    }
   });
 
-  console.log(
-    `convertTreeToFlow: Finished generating raw elements. Nodes: ${nodes.length}, Edges: ${edges.length}`
-  );
   return { nodes, edges }; // Return nodes with default positions
-  console.log("function convertTreeToFlow finished");
-  return { nodes, edges }; // Return nodes with default positions
+  // console.log("function convertTreeToFlow finished");
 };
 // --- End convertTreeToFlow modification ---
 
@@ -269,7 +243,7 @@ async function getQuestions(
   nodeId: string,
   activePromisesRef: React.MutableRefObject<Map<string, OpenAIPromise>> // Pass ref
 ): Promise<void> {
-  console.log("function getQuestions started");
+  // console.log("function getQuestions started");
   const { qaTree: treeSnapshot, model: modelStoreKey, persona, addNode, updateNode, setError } = useAppStore.getState();
   const node = treeSnapshot?.[nodeId];
 
@@ -448,11 +422,11 @@ async function getQuestions(
   }
 
   return questionsPromise;
-  console.log("function getQuestions finished");
+  // console.log("function getQuestions finished");
 }
 
 function GraphPage(props: GraphPageProps) {
-  console.log("function GraphPage started");
+  // console.log("function GraphPage started");
   const {
     qaTree,
     focusedId,
@@ -477,6 +451,9 @@ function GraphPage(props: GraphPageProps) {
   const [isAddNodeModalOpen, setIsAddNodeModalOpen] = useState(false);
   const [addNodeSourceId, setAddNodeSourceId] = useState<string | null>(null);
   const [answeringNodes, setAnsweringNodes] = useState<Set<string>>(new Set());
+
+  // State to hold the final laid-out elements
+  const [laidOutFlowElements, setLaidOutFlowElements] = useState<{ nodes: Node[], edges: Edge[] }>({ nodes: [], edges: [] });
 
   const connectingNodeId = useRef<string | null>(null);
   const activePromises = useRef<Map<string, OpenAIPromise>>(new Map());
@@ -522,8 +499,6 @@ function GraphPage(props: GraphPageProps) {
 
   const generateAnswerForNode = useCallback(
     async (nodeId: string) => {
-      console.log("function generateAnswerForNode started");
-      console.log(`Manual trigger: generateAnswerForNode(${nodeId})`);
       setAnsweringNodes((prev) => new Set(prev).add(nodeId));
       useAppStore.getState().setIsGenerating(true);
       useAppStore.getState().setError(null);
@@ -702,7 +677,6 @@ function GraphPage(props: GraphPageProps) {
         useAppStore.getState().setIsGenerating(false);
         console.log(`generateAnswerForNode: FINISHED generation process for question node ${nodeId}`);
       }
-      console.log("function generateAnswerForNode finished");
     },
     []
   );
@@ -776,42 +750,36 @@ function GraphPage(props: GraphPageProps) {
     if (!qaTree) {
       return { nodes: [], edges: [] };
     }
-    console.log(
-      `useMemo (Nodes/Edges): Recalculating raw elements... isGenerating=${isGenerating}, answeringNodes=${JSON.stringify(Array.from(answeringNodes))}, treeKeys=${JSON.stringify(Object.keys(qaTree))}`
-    );
     const result = convertTreeToFlow(
-        qaTree,
-        setNodeDims,
-        requestDeleteBranch,
-        generateAnswerForNode,
-        answeringNodes,
-        isGenerating,
-        nodeDims
+      qaTree,
+      setNodeDims,
+      requestDeleteBranch,
+      generateAnswerForNode,
+      answeringNodes,
+      isGenerating,
+      nodeDims
     );
-    console.log(`useMemo (Nodes/Edges): Finished. Nodes: ${result.nodes.length}, Edges: ${result.edges.length}`);
     return result;
-  }, [
-    qaTree,
-    requestDeleteBranch,
-    generateAnswerForNode,
-    answeringNodes,
-    isGenerating,
-    nodeDims
-  ]);
-  // --- End Memoize Raw Nodes/Edges ---
+  }, [qaTree, requestDeleteBranch, generateAnswerForNode, answeringNodes, isGenerating, nodeDims]);
+  // --- End Memoize Raw Nodes/Edges (logs removed) ---
 
-  // --- Memoize Layout Calculation ---
-  const laidOutElements = useMemo(() => {
-      console.log(`useMemo (Layout): Recalculating layout... nodeDimsKeys=${JSON.stringify(Object.keys(nodeDims))}, nodeCount=${memoizedNodesAndEdges.nodes.length}`);
+  // --- Debounced Layout recalculation (100ms) ---
+  useEffect(() => {
+    if (memoizedNodesAndEdges.nodes.length === 0) {
+      setLaidOutFlowElements({ nodes: [], edges: [] });
+      return;
+    }
+    const handler = setTimeout(() => {
       const result = layoutElements(
-          memoizedNodesAndEdges.nodes,
-          memoizedNodesAndEdges.edges,
-          nodeDims
+        memoizedNodesAndEdges.nodes,
+        memoizedNodesAndEdges.edges,
+        nodeDims
       );
-      console.log(`useMemo (Layout): Finished. Nodes: ${result.nodes.length}, Edges: ${result.edges.length}`);
-      return result;
-  }, [memoizedNodesAndEdges.nodes, memoizedNodesAndEdges.edges, nodeDims]); // Depend on raw elements and dims
-  // --- End Memoize Layout Calculation ---
+      setLaidOutFlowElements(result);
+    }, 100);
+    return () => clearTimeout(handler);
+  }, [memoizedNodesAndEdges, nodeDims]);
+  // --- End Debounced Layout recalculation ---
 
   const handleAddNodeFromModal = (type: NodeType) => {
     if (addNodeSourceId) {
@@ -865,8 +833,8 @@ function GraphPage(props: GraphPageProps) {
       )}
 
       <FlowProvider
-        flowNodes={laidOutElements.nodes}
-        flowEdges={laidOutElements.edges}
+        flowNodes={laidOutFlowElements.nodes}
+        flowEdges={laidOutFlowElements.edges}
         nodeDims={nodeDims}
         onConnectStart={onConnectStart}
         onConnectEnd={onConnectEnd}
@@ -942,7 +910,7 @@ function GraphPage(props: GraphPageProps) {
       />
     </div>
   );
-  console.log("function GraphPage finished");
+  // console.log("function GraphPage finished");
 }
 
 export default GraphPage;

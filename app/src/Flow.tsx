@@ -43,6 +43,10 @@ import {
   XYPosition,
   useStore,
   type ReactFlowState,
+  ConnectionLineType,
+  type Connection,
+  type DefaultEdgeOptions,
+  MarkerType,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 // DevTools components
@@ -83,7 +87,7 @@ export const openai_server = async (
     nodeId: string;
   }
 ) => {
-  console.log("function openai_server started");
+  // console.log("function openai_server started");
   const fingerprint = await getFingerprint();
   let ws: WebSocket | null = null;
   let isAborted = false;
@@ -216,8 +220,6 @@ export const openai_server = async (
   };
 
   return promise;
-  console.log("function openai_server finished");
-  return promise;
 };
 
 type FlowProps = {
@@ -229,7 +231,7 @@ type FlowProps = {
   onConnectEnd: (event: MouseEvent | TouchEvent) => void;
 };
 export const Flow: React.FC<FlowProps> = (props) => {
-  console.log("function Flow started");
+  // console.log("function Flow started");
   const [nodes, setNodes, onNodesChangeDefault] = useNodesState(
     props.flowNodes
   );
@@ -338,14 +340,30 @@ export const Flow: React.FC<FlowProps> = (props) => {
   const maxZoomSlider = 2.5; // Define a reasonable max for the slider
   // --- End Define Min/Max Zoom for Slider ---
 
+  // Put nodeColorFunc back as it's used by MiniMap
   const nodeColorFunc = useCallback((node: Node) => {
     // Basic color logic, refine as needed based on node type or data
     switch (node.type) {
-      case 'input': return '#6ede87';
-      case 'output': return '#6865A5';
-      default: return '#ff0072';
+      case 'input': return '#6ede87'; // Example color
+      case 'output': return '#6865A5'; // Example color
+      // Add cases for your actual node types if needed
+      default: return '#ff0072'; // Default color
     }
   }, []);
+
+  // Define the default edge options with the custom marker AND style
+  const defaultEdgeOptions: DefaultEdgeOptions = {
+    markerEnd: {
+      type: MarkerType.ArrowClosed,
+      width: 20,
+      height: 20,
+      color: '#FF0072',
+    },
+    style: {
+      stroke: '#FF0072', // Set the edge line color
+      strokeWidth: 2,    // Increase stroke width to make marker appear larger
+    },
+  };
 
   return (
     <div ref={reactFlowWrapper} className="w-full h-full fixed top-0 left-0">
@@ -372,6 +390,8 @@ export const Flow: React.FC<FlowProps> = (props) => {
         elevateEdgesOnSelect={true}
         ref={reactFlowWrapper}
         data-testid="flow-canvas"
+        connectionLineType={ConnectionLineType.SmoothStep}
+        defaultEdgeOptions={defaultEdgeOptions}
       >
         <Background variant={BackgroundVariant.Dots} gap={12} size={1} />
         <Controls
@@ -435,7 +455,7 @@ export const Flow: React.FC<FlowProps> = (props) => {
       </div>
     </div>
   );
-  console.log("function Flow finished");
+  // console.log("function Flow finished");
 };
 
 interface FlowProviderProps extends FlowProps {
@@ -444,7 +464,7 @@ interface FlowProviderProps extends FlowProps {
 }
 
 export const FlowProvider: React.FC<FlowProviderProps> = (props) => {
-  console.log("function FlowProvider started");
+  // console.log("function FlowProvider started");
   return (
     <ReactFlowProvider>
       <Flow {...props} />
@@ -486,9 +506,10 @@ interface DevNodeInfoProps {
   dragging?: boolean;
   measured?: { width?: number | null; height?: number | null };
   parentId?: string;
+  hidden?: boolean;
 }
 
-function DevNodeInfo({ id, position, data, width, height, selected, dragging, measured, parentId }: DevNodeInfoProps) {
+function DevNodeInfo({ id, position, data, width, height, selected, dragging, measured, parentId, hidden }: DevNodeInfoProps) {
   // Use measured dimensions if available, otherwise fallback
   const nodeWidth = measured?.width ?? width ?? 0;
   const nodeHeight = measured?.height ?? height ?? 0;
@@ -550,6 +571,9 @@ function DevNodeInfo({ id, position, data, width, height, selected, dragging, me
       {isQuestionNode && data && typeof data.question === 'string' && (
            <div style={{ color: '#e2e8f0' }}>Q: {data.question.substring(0, 100)}{data.question.length > 100 ? '...' : ''}</div>
       )}
+
+      {/* Display Hidden status */}
+      {hidden && <div style={{ color: '#F56565' }}>Hidden: true</div>}
 
       {selected && <div style={{ color: '#63B3ED' }}>Selected</div>}
       {dragging && <div style={{ color: '#F6E05E' }}>Dragging</div>}

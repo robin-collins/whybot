@@ -23,7 +23,7 @@ import "./InteractiveNode.css"; // Create this CSS file for styling
 
 // --- Debounce Utility ---
 function debounce<F extends (...args: any[]) => any>(func: F, wait: number): F {
-  console.log("function debounce started");
+  // console.log("function debounce started");
   let timeoutId: ReturnType<typeof setTimeout> | null = null;
 
   const debounced = ((...args: Parameters<F>): void => {
@@ -34,7 +34,7 @@ function debounce<F extends (...args: any[]) => any>(func: F, wait: number): F {
       func(...args);
     }, wait);
   }) as F;
-  console.log("function debounce finished");
+  // console.log("function debounce finished");
   return debounced;
 }
 // --- End Debounce Utility ---
@@ -49,7 +49,7 @@ async function handleFileUploadLogic(
   // Receive updateNode action from the store
   updateNode: (nodeId: string, dataChanges: Partial<QATreeNode>) => void
 ): Promise<void> {
-  console.log("function handleFileUploadLogic started");
+  // console.log("function handleFileUploadLogic started");
   console.log(`Processing file ${file.name} for node ${nodeId}`);
   // Update node state via store action
   updateNode(nodeId, {
@@ -77,7 +77,7 @@ async function handleFileUploadLogic(
         file.type || "unknown"
       }) not supported. Please upload text-based files.`,
     });
-    console.log("function handleFileUploadLogic finished");
+    // console.log("function handleFileUploadLogic finished");
     return;
   }
   if (file.size > MAX_FILE_SIZE) {
@@ -87,7 +87,7 @@ async function handleFileUploadLogic(
         MAX_FILE_SIZE / 1024 / 1024
       }MB).`,
     });
-    console.log("function handleFileUploadLogic finished");
+    // console.log("function handleFileUploadLogic finished");
     return;
   }
 
@@ -109,7 +109,7 @@ async function handleFileUploadLogic(
       errorMessage: `Error reading file: ${error.message}`,
     });
   }
-  console.log("function handleFileUploadLogic finished");
+  // console.log("function handleFileUploadLogic finished");
 }
 
 /**
@@ -121,7 +121,7 @@ async function fetchWebpageContentLogic(
   // Receive updateNode action from the store
   updateNode: (nodeId: string, dataChanges: Partial<QATreeNode>) => void
 ): Promise<void> {
-  console.log("function fetchWebpageContentLogic started");
+  // console.log("function fetchWebpageContentLogic started");
   console.log(`Fetching URL ${url} for node ${nodeId}`);
   // Update node state via store action
   updateNode(nodeId, { isLoading: true, errorMessage: undefined, answer: "" });
@@ -163,7 +163,7 @@ async function fetchWebpageContentLogic(
       errorMessage: error.message || "Failed to fetch URL.",
     });
   }
-  console.log("function fetchWebpageContentLogic finished");
+  // console.log("function fetchWebpageContentLogic finished");
 }
 // --- End File and URL Handling Logic ---
 
@@ -195,9 +195,9 @@ type AppInteractiveNode = Node<InteractiveNodeData, 'interactiveNode'>;
 
 // --- Modal for node type selection ---
 const NodeTypeModal = ({ open, onSelect, onClose }) => {
-  console.log("function NodeTypeModal started");
+  // console.log("function NodeTypeModal started");
   if (!open) {
-    console.log("function NodeTypeModal finished");
+    // console.log("function NodeTypeModal finished");
     return null;
   }
   const modal = (
@@ -211,7 +211,7 @@ const NodeTypeModal = ({ open, onSelect, onClose }) => {
       </div>
     </div>
   );
-  console.log("function NodeTypeModal finished");
+  // console.log("function NodeTypeModal finished");
   return modal;
 };
 
@@ -221,7 +221,7 @@ export const InteractiveNode: React.FC<NodeProps<AppInteractiveNode>> = ({
   data, // Keep data prop
   selected,
 }) => {
-  console.log("function InteractiveNode started");
+  // console.log("function InteractiveNode started");
   // Destructure needed props ONCE
   const {
     nodeType,
@@ -246,6 +246,9 @@ export const InteractiveNode: React.FC<NodeProps<AppInteractiveNode>> = ({
       addNode: state.addNode,
       setFocusedId: state.setFocusedId,
     })));
+
+  // Selector to get the answer content from the corresponding answer node
+  const answerNodeAnswer = useAppStore(state => state.qaTree?.[`a-${nodeID}`]?.answer);
 
   const { setNodes, setEdges } = useReactFlow();
   const [ref, bounds] = useMeasure({ scroll: true, debounce: 50 }); // Ref for outer motion.div
@@ -326,15 +329,13 @@ export const InteractiveNode: React.FC<NodeProps<AppInteractiveNode>> = ({
       (Math.abs(scaledWidth - (currentDims?.width || 0)) > 1 ||
        Math.abs(scaledHeight - (currentDims?.height || 0)) > 1)
     ) {
-      setNodeDims((dims) => ({
+      // Batch dimension updates to reduce rapid renders
+      debouncedSetNodeDims((dims) => ({
         ...dims,
         [nodeID]: { width: scaledWidth, height: scaledHeight },
       }));
-      console.log(
-        `Node ${nodeID} dimensions updated (updateDimensions): ${scaledWidth.toFixed(1)}x${scaledHeight.toFixed(1)} (Scale: ${scale.toFixed(2)})`
-      );
     }
-  }, [nodeID, setNodeDims, currentDims?.width, currentDims?.height, bounds.width, bounds.height]); // Include bounds as fallback
+  }, [nodeID, debouncedSetNodeDims, currentDims?.width, currentDims?.height, bounds.width, bounds.height]); // Include bounds as fallback
 
   // Debounced version for general resize/content changes (non-expansion)
   const debouncedUpdateDimensions = useCallback(
@@ -583,7 +584,7 @@ export const InteractiveNode: React.FC<NodeProps<AppInteractiveNode>> = ({
                 {String(question || "")}
               </ReactMarkdown>
             )}
-            {!answer && onGenerateAnswer && (
+            {!answerNodeAnswer && onGenerateAnswer && (
               <button
                 disabled={
                   showAnsweringButton ||
@@ -884,7 +885,7 @@ export const InteractiveNode: React.FC<NodeProps<AppInteractiveNode>> = ({
     /* NodeTypeModal likely needs to be rendered outside the motion.div, perhaps sibling or at Flow level */
     /* <NodeTypeModal open={showTypeModal} onSelect={handleTypeSelect} onClose={() => setShowTypeModal(false)} /> */
   );
-  console.log("function InteractiveNode finished");
+  // console.log("function InteractiveNode finished");
 };
 
 // Default export or named export

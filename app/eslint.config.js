@@ -46,6 +46,8 @@ export default tseslint.config(
             ...pluginReact.configs.recommended.rules,
             ...pluginReact.configs['jsx-runtime'].rules, // Add rules for new JSX transform
             ...pluginReactHooks.configs.recommended.rules,
+            // Prevent unreachable code
+            'no-unreachable': 'error',
             // ...pluginJsxA11y.configs.recommended.rules, // Optional
             "react/prop-types": "off", // Not needed with TypeScript
             // Consider adding specific TS-aware rules overrides here if needed

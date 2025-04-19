@@ -8,7 +8,7 @@ import classNames from "classnames";
 import { NodeDims } from "./types";
 import { useFocused } from "./FocusedContext";
 
-console.log("FadeoutTextNode");
+// console.log("FadeoutTextNode");
 
 const getScaleFactor = (): number => {
   const viewportElement = document.querySelector(
@@ -51,7 +51,7 @@ type FadeoutTextNodeProps = {
   };
 };
 export const FadeoutTextNode: React.FC<FadeoutTextNodeProps> = (props) => {
-  console.log("function FadeoutTextNode started");
+  // console.log("function FadeoutTextNode started");
   const isLongAnswer = !props.data.question && props.data.text.length > 800;
   const targetMaxWidth = isLongAnswer ? 500 : 250;
 
@@ -232,5 +232,5 @@ export const FadeoutTextNode: React.FC<FadeoutTextNodeProps> = (props) => {
         )}
     </div>
   );
-  console.log("function FadeoutTextNode finished");
+  // console.log("function FadeoutTextNode finished");
 };

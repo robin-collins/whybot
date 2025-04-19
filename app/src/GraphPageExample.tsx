@@ -25,7 +25,7 @@ export const streamQuestion = async (
   exampleTree: QATree,
   setResultTree: Dispatch<SetStateAction<QATree>>
 ) => {
-  console.log("function streamQuestion started");
+  // console.log("function streamQuestion started");
   return new Promise((resolve) => {
     const node = exampleTree[id];
 
@@ -38,7 +38,7 @@ export const streamQuestion = async (
       });
       if (i >= node.question.length) {
         clearInterval(intervalQuestion);
-        console.log("function streamQuestion finished");
+        // console.log("function streamQuestion finished");
         resolve("done streaming question");
       }
     }, 50);
@@ -51,7 +51,7 @@ export const streamAnswer = async (
   exampleTree: QATree,
   setResultTree: Dispatch<SetStateAction<QATree>>
 ) => {
-  console.log("function streamAnswer started");
+  // console.log("function streamAnswer started");
   return new Promise((resolve) => {
     const node = exampleTree[id];
     let i = 0;
@@ -63,7 +63,7 @@ export const streamAnswer = async (
       });
       if (i >= node.answer.length) {
         clearInterval(intervalAnswer);
-        console.log("function streamAnswer finished");
+        // console.log("function streamAnswer finished");
         resolve("done streaming answer");
       }
     }, 50);
@@ -76,7 +76,7 @@ export const streamQANode = async (
   exampleTree: QATree,
   setResultTree: Dispatch<SetStateAction<QATree>>
 ): Promise<string> => {
-  console.log("function streamQANode started");
+  // console.log("function streamQANode started");
   return new Promise(async (resolve) => {
     const node = exampleTree[id];
 
@@ -93,7 +93,7 @@ export const streamQANode = async (
 
     await streamQuestion(id, growingTree, exampleTree, setResultTree);
     await streamAnswer(id, growingTree, exampleTree, setResultTree);
-    console.log("function streamQANode finished");
+    // console.log("function streamQANode finished");
     resolve("done streaming node");
   });
 };
@@ -102,7 +102,7 @@ export const streamExample = async (
   example: Example,
   setResultTree: Dispatch<SetStateAction<QATree>>
 ) => {
-  console.log("function streamExample started");
+  // console.log("function streamExample started");
   const growingTree: QATree = {};
   const exampleTree = example.tree;
   let layer: string[] = ["0"];
@@ -125,7 +125,7 @@ export const streamExample = async (
     await Promise.all(promises);
     layer = nextLayer;
   }
-  console.log("function streamExample finished");
+  // console.log("function streamExample finished");
 };
 
 type GraphPageExampleProps = {
@@ -134,7 +134,7 @@ type GraphPageExampleProps = {
 };
 
 export function GraphPageExample({ example, onExit }: GraphPageExampleProps) {
-  console.log("function GraphPageExample started");
+  // console.log("function GraphPageExample started");
   const [resultTree, setResultTree] = useState<QATree>({});
   const [nodeDims, setNodeDims] = useState<NodeDims>({});
   const { nodes, edges } = useMemo(() => {
@@ -229,5 +229,5 @@ export function GraphPageExample({ example, onExit }: GraphPageExampleProps) {
       </div>
     </div>
   );
-  console.log("function GraphPageExample finished");
+  // console.log("function GraphPageExample finished");
 }

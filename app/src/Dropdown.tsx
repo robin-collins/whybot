@@ -15,8 +15,8 @@ function Dropdown(props: {
   options: DropdownOption[];
   onChange(value: string): void;
 }) {
-  console.log("function Dropdown started");
-  console.log("function Dropdown finished");
+  // console.log("function Dropdown started");
+  // console.log("function Dropdown finished");
   return (
     <Listbox value={props.value} onChange={props.onChange}>
       {({ open }) => (

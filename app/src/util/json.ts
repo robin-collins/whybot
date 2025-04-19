@@ -1,5 +1,5 @@
 export function closePartialJson(jsonString: string): string {
-  console.log("function closePartialJson started");
+  // console.log("function closePartialJson started");
   let output = "";
   const bracketStack: string[] = [];
 
@@ -49,13 +49,13 @@ export function closePartialJson(jsonString: string): string {
     }
   }
 
-  console.log("function closePartialJson finished");
+  // console.log("function closePartialJson finished");
   return output;
 }
 
 // Function to download data as JSON file
 export function downloadDataAsJson(data: any, filename: string) {
-  console.log("function downloadDataAsJson started");
+  // console.log("function downloadDataAsJson started");
   const json = JSON.stringify(data);
   const blob = new Blob([json], { type: "application/json" });
   const url = URL.createObjectURL(blob);
@@ -66,5 +66,5 @@ export function downloadDataAsJson(data: any, filename: string) {
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
-  console.log("function downloadDataAsJson finished");
+  // console.log("function downloadDataAsJson finished");
 }
